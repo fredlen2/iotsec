@@ -19,6 +19,7 @@ python3 scripts/gen_circuits_json.py
 
 python3 scripts/automate_sat_attack.py
 
+python3 scripts/autoparallel_sat_attack.py
 
 
 python3 tools/sarlock.py c432.bench --keysize 16

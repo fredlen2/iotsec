@@ -116,7 +116,7 @@ for circuit in circuits:
                 print(f"Verifying key for: {locked_file}")
                 lcmp_output, _ = run_command(lcmp_command)
 
-                key_correct = "YES" if "Key Verified" in lcmp_output else "NO"
+                key_correct = "YES" if "equivalent" in lcmp_output else "NO"    # Key verified or equivalent
 
             # Step 5: Save Results
             with open(results_file, "a", newline="") as file:

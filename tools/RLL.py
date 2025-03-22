@@ -43,8 +43,14 @@ def main():
     base_name, extension = save_path_base.rsplit(".", 1)
     key_str = ''.join(str(k) for k in key)
 
+    # for i in range(iterations):
+    #     save_path = f"{base_name}_{i}.{extension}"
     for i in range(iterations):
-        save_path = f"{base_name}_{i}.{extension}"
+        if iterations == 1:
+            save_path = f"{base_name}.{extension}"
+        else:
+            save_path = f"{base_name}_{i}.{extension}"
+
         run(bench_path, key, save_path)
         # Run the command after each benchmark file is written
         run_command(bench_path, save_path, key_str)
