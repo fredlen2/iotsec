@@ -2,9 +2,16 @@
 Ensure all directories and files exist
 mkdir -p config data locked_circuits results tools
 touch config/circuits.json  # If not already present
+touch results/sat_attack.log  # If not already present
 
 create a .venv directory in your project folder and activate it with the second line code.
-python -m venv .venv
+# Sudo issues run these to create the .venv
+python3 -m pip install --user virtualenv
+python3 -m virtualenv .venv
+
+# No sudo issues
+python3 -m venv .venv
+
 source .venv/bin/activate
 
 

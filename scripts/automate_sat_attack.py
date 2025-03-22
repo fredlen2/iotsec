@@ -78,18 +78,20 @@ for circuit in circuits:
 
     for key_size in circuit["key_sizes"]:
         key = "".join(["1" if i % 2 == 0 else "0" for i in range(key_size)])  # Generate key pattern
-
+        
         for i in range(iterations):
             locked_file = os.path.join(LOCKED_FOLDER, f"{name}_RLL_K{key_size}_{i}.bench")
             
             # Step 1: Generate RLL-Locked Design
-            rll_command = f"python3 {TOOLS_FOLDER}/rll.py --bench_path {bench_file} --key {key} --save_path {locked_file} --iter 1"
+            rll_command = f"python3 {TOOLS_FOLDER}/RLL.py --bench_path {bench_file} --key {key} --save_path {locked_file} --iter 1"
             logging.info(f"Generating locked design: {locked_file}")
+            print(f"Generating locked design: {locked_file}")
             run_command(rll_command)
 
             # Step 2: Run SAT Attack
             sat_command = f"{TOOLS_FOLDER}/sld {locked_file} {bench_file}"
             logging.info(f"Running SAT attack on: {locked_file}")
+            print(f"Running SAT attack on: {locked_file}")
             sat_output, sat_time = run_command(sat_command)
 
             # Extract SAT Attack Iterations
@@ -111,6 +113,7 @@ for circuit in circuits:
             if recovered_key:
                 lcmp_command = f"{TOOLS_FOLDER}/lcmp {bench_file} {locked_file} key={recovered_key}"
                 logging.info(f"Verifying key for: {locked_file}")
+                print(f"Verifying key for: {locked_file}")
                 lcmp_output, _ = run_command(lcmp_command)
 
                 key_correct = "YES" if "Key Verified" in lcmp_output else "NO"
@@ -120,5 +123,5 @@ for circuit in circuits:
                 writer = csv.writer(file)
                 writer.writerow([name, locked_file, key_size, sat_time, iterations_found, key_correct])
 
-logging.info("Process completed. Check 'results/sat_attack_results.csv' for results.")
-print("Task A completed. Check results in 'results/sat_attack_results.csv'.")
+logging.info("Process completed. Check 'results/sat_attack_results.csv' for results.\n'locked bench files are also in locked_circuits/ folder")
+print("Task A completed. Check results in 'results/sat_attack_results.csv'.\n'locked bench files are also in locked_circuits/ folder'")

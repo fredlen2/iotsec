@@ -1,9 +1,12 @@
 import argparse
 import subprocess
+import os
 from utils import parse_bench_file, defining_keyinputs, insert_key_gates, write_list_to_file
 
 def run_command(original_circuit, encrypted_circuit, key):
-    command = f"./lcmp {original_circuit} {encrypted_circuit} key={key}"
+    # command = f"./lcmp {original_circuit} {encrypted_circuit} key={key}"
+    command = f"{os.path.dirname(__file__)}/lcmp {original_circuit} {encrypted_circuit} key={key}"
+
     try:
         subprocess.run(command, shell=True, check=True)
         print(f"Command executed successfully: {command}")
@@ -21,6 +24,8 @@ def run(bench_path: str, key: list, save_path: str):
     insert_key_gates(key, gates, start_num)
 
     all_gates = [f"INPUT({i})" for i in inputs] + [f"OUTPUT({o})" for o in outputs] + gates
+    
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     write_list_to_file(all_gates, save_path, key)
 
 def parse_args():
