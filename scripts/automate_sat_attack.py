@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import subprocess
 import time
 import csv
@@ -92,14 +93,16 @@ for circuit in circuits:
             sat_command = f"{TOOLS_FOLDER}/sld {locked_file} {bench_file}"
             logging.info(f"Running SAT attack on: {locked_file}")
             print(f"Running SAT attack on: {locked_file}")
-            sat_output, sat_time = run_command(sat_command)
 
-            # Extract SAT Attack Iterations
-            iterations_found = None
-            for line in sat_output.split("\n"):
-                if "Iterations:" in line:
-                    iterations_found = int(line.split(":")[1].strip())
-                    break
+            sat_output, _ = run_command(sat_command)
+            logging.info(f"SAT attack results: {sat_output}")
+
+            # Extract SAT Attack Iterations and Time
+            iterations_found, sat_time = None, None
+            match = re.search(r"iteration=(\d+);.*?cpu_time=([\d.]+);", sat_output)
+            if match:
+                iterations_found = int(match.group(1))
+                sat_time = float(match.group(2))
 
             # Step 3: Extract recovered key
             recovered_key = None
@@ -110,18 +113,18 @@ for circuit in circuits:
 
             # Step 4: Verify key correctness
             key_correct = "N/A"
-            if recovered_key:
-                lcmp_command = f"{TOOLS_FOLDER}/lcmp {bench_file} {locked_file} key={recovered_key}"
+            if os.path.exists(locked_file):  # Ensure file exists before running lcmp
+                lcmp_command = f"{TOOLS_FOLDER}/lcmp {bench_file} {locked_file} key={key}"
                 logging.info(f"Verifying key for: {locked_file}")
                 print(f"Verifying key for: {locked_file}")
                 lcmp_output, _ = run_command(lcmp_command)
 
-                key_correct = "YES" if "equivalent" in lcmp_output else "NO"    # Key verified or equivalent
+                key_correct = "YES" if "equivalent" in lcmp_output else "NO"
 
             # Step 5: Save Results
             with open(results_file, "a", newline="") as file:
                 writer = csv.writer(file)
-                writer.writerow([name, locked_file, key_size, sat_time, iterations_found, key_correct])
+                writer.writerow([f"{name}.bench", locked_file, key_size, sat_time, iterations_found, key_correct])
 
 logging.info("Process completed. Check 'results/sat_attack_results.csv' for results.\n'locked bench files are also in locked_circuits/ folder")
 print("Task A completed. Check results in 'results/sat_attack_results.csv'.\n'locked bench files are also in locked_circuits/ folder'")

@@ -4,101 +4,113 @@ import subprocess
 import time
 import csv
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
-# Initial Setup
-JOBS = 8  # Adjust this depending on CPU cores
+# Setup Logging
+os.makedirs("results", exist_ok=True)
+log_file = "results/sat_attack_parallel.log"
+logging.basicConfig(filename=log_file, level=logging.INFO, 
+                    format="%(asctime)s - %(levelname)s - %(message)s")
 
+# Define Folders
 CONFIG_FILE = "config/circuits.json"
 DATA_FOLDER = "data"
 LOCKED_FOLDER = "locked_circuits"
 RESULTS_FOLDER = "results"
 TOOLS_FOLDER = "tools"
-RLL_SCRIPT = f"{TOOLS_FOLDER}/RLL.py"
-SAT_BINARY = f"{TOOLS_FOLDER}/sld"
-LCMP_BINARY = f"{TOOLS_FOLDER}/lcmp"
-RESULTS_CSV = os.path.join(RESULTS_FOLDER, "sat_attack_results_parallel.csv")
-LOG_FILE = os.path.join(RESULTS_FOLDER, "sat_attack.log")
 
 os.makedirs(LOCKED_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
 
-logging.basicConfig(filename=LOG_FILE, level=logging.INFO, 
-                    format="%(asctime)s - %(levelname)s - %(message)s")
+results_file = os.path.join(RESULTS_FOLDER, "sat_attack_parallel_results.csv")
 
-# Load config 
+# Auto-update config
+if not os.path.exists(CONFIG_FILE):
+    circuits = []
+    for filename in os.listdir(DATA_FOLDER):
+        if filename.endswith(".bench"):
+            name = filename.split(".")[0]
+            key_sizes = [16, 32] if name.startswith("c") else [128, 256]
+            circuits.append({"name": name, "file": filename, "key_sizes": key_sizes})
+    with open(CONFIG_FILE, "w") as f:
+        json.dump({"circuits": circuits, "iterations": 10}, f, indent=4)
+    logging.info("Generated config file.")
+
+# Load config
 with open(CONFIG_FILE, "r") as f:
     config = json.load(f)
 
 circuits = config["circuits"]
 iterations = config["iterations"]
 
-# CSV Setup for output tracking
-if not os.path.exists(RESULTS_CSV):
-    with open(RESULTS_CSV, "w", newline="") as f:
-        writer = csv.writer(f)
+# Create CSV with header
+if not os.path.exists(results_file):
+    with open(results_file, "w", newline="") as file:
+        writer = csv.writer(file)
         writer.writerow(["Circuit", "Locked File", "Key Size", "SAT Attack Runtime (s)", "Iterations", "Key Correct"])
 
-def run_task(name, bench_file, key_size, i):
-    key = "".join(["1" if j % 2 == 0 else "0" for j in range(key_size)])
-    locked_basename = f"{name}_RLL_K{key_size}_{i}"
-    expected_output = os.path.join(LOCKED_FOLDER, f"{locked_basename}.bench")
+def run_command(command):
+    start_time = time.time()
+    try:
+        result = subprocess.run(command, shell=True, capture_output=True, text=True, check=True)
+        output = result.stdout
+    except subprocess.CalledProcessError as e:
+        output = e.stdout + e.stderr
+        logging.error(f"Command failed: {command}\nError: {output}")
+    return output, round(time.time() - start_time, 3)
 
-    # Step 1: RLL Locking
-    rll_cmd = f"python3 {RLL_SCRIPT} --bench_path {bench_file} --key {key} --save_path {os.path.join(LOCKED_FOLDER, locked_basename)} --iter 1"
-    logging.info(f"[{name}] Generating locked file {expected_output}")
-    subprocess.run(rll_cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def process_lock_and_attack(name, bench_file, key_size, iteration):
+    key = "".join(["1" if i % 2 == 0 else "0" for i in range(key_size)])
+    locked_file = os.path.join(LOCKED_FOLDER, f"{name}_RLL_K{key_size}_{iteration}.bench")
 
-    if not os.path.exists(expected_output):
-        logging.error(f"[{name}] Failed to generate {expected_output}")
-        return [name, expected_output, key_size, "ERROR", "", "GEN_FAIL"]
+    rll_command = f"python3 {TOOLS_FOLDER}/RLL.py --bench_path {bench_file} --key {key} --save_path {locked_file} --iter 1"
+    logging.info(f"Generating locked: {locked_file}")
+    run_command(rll_command)
 
-    # Step 2: SAT Attack
-    sat_cmd = f"{SAT_BINARY} {expected_output} {bench_file}"
-    sat_start = time.time()
-    sat_proc = subprocess.run(sat_cmd, shell=True, capture_output=True, text=True)
-    sat_time = round(time.time() - sat_start, 3)
+    sat_command = f"{TOOLS_FOLDER}/sld {locked_file} {bench_file}"
+    sat_output, sat_time = run_command(sat_command)
 
-    sat_output = sat_proc.stdout + sat_proc.stderr
     recovered_key = None
-    iteration_count = None
-
+    iterations_found = None
     for line in sat_output.splitlines():
-        if line.strip().startswith("iteration="):
+        if line.startswith("key="):
+            recovered_key = line.replace("key=", "").strip()
+        elif line.startswith("iteration="):
             try:
-                iteration_count = int(line.strip().split("=")[1].split(";")[0])
+                iterations_found = int(line.split(";")[0].split("=")[1].strip())
             except:
-                iteration_count = None
-        if "key=" in line and len(line.strip().split("=")[1].strip()) == key_size:
-            recovered_key = line.strip().split("=")[1].strip()
+                iterations_found = None
 
-    # Step 3: Key Verification
-    key_status = "N/A"
+    key_correct = "N/A"
     if recovered_key:
-        lcmp_cmd = f"{LCMP_BINARY} {bench_file} {expected_output} key={recovered_key}"
-        lcmp_proc = subprocess.run(lcmp_cmd, shell=True, capture_output=True, text=True)
-        key_status = "YES" if "equivalent" in lcmp_proc.stdout else "NO"
+        lcmp_command = f"{TOOLS_FOLDER}/lcmp {bench_file} {locked_file} key={recovered_key}"
+        lcmp_output, _ = run_command(lcmp_command)
+        key_correct = "YES" if "equivalent" in lcmp_output else "NO"
 
-    return [name, expected_output, key_size, sat_time, iteration_count, key_status]
+    return [name + ".bench", locked_file, key_size, sat_time, iterations_found, key_correct]
 
-# Parallel Execution
+# Parallel Processing
 tasks = []
-for circuit in circuits:
-    bench_path = os.path.join(DATA_FOLDER, circuit["file"])
-    for key_size in circuit["key_sizes"]:
-        for i in range(iterations):
-            tasks.append((circuit["name"], bench_path, key_size, i))
+with ProcessPoolExecutor() as executor:
+    futures = []
+    for circuit in circuits:
+        bench_file = os.path.join(DATA_FOLDER, circuit["file"])
+        name = circuit["name"]
+        for key_size in circuit["key_sizes"]:
+            for i in range(iterations):
+                futures.append(executor.submit(process_lock_and_attack, name, bench_file, key_size, i))
 
-print(f"Running {len(tasks)} SAT attack tasks in parallel with {JOBS} workers...")
+    for future in as_completed(futures):
+        result_row = future.result()
+        with open(results_file, "a", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(result_row)
 
-with ThreadPoolExecutor(max_workers=JOBS) as executor:
-    futures = {executor.submit(run_task, *task): task for task in tasks}
+# Call PDF generator
+try:
+    subprocess.run("python3 scripts/generate_pdf_report.py", shell=True, check=True)
+except Exception as e:
+    logging.error(f"PDF generation failed: {e}")
 
-    with open(RESULTS_CSV, "a", newline="") as f:
-        writer = csv.writer(f)
-        for future in as_completed(futures):
-            result = future.result()
-            writer.writerow(result)
-
-print(f"Task A (Parallelized) complete! Check: {RESULTS_CSV}")
-logging.info("Parallelized SAT attacks complete.")
+logging.info("All done. See CSV and PDF in results/")
+print("Task A completed with parallel execution. Report saved in 'results/'")

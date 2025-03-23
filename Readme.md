@@ -14,6 +14,10 @@ python3 -m venv .venv
 
 source .venv/bin/activate
 
+# install python requirements
+
+pip install -r requirements.txt
+
 
 python3 scripts/gen_circuits_json.py
 
