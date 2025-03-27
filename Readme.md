@@ -49,3 +49,18 @@ Adds an AND-based trigger condition.
 Introduces an XOR-based payload to modify outputs.
 Generates 50 Trojan-infected files for each circuit.
 Runs Atalanta to check if the Trojan can be detected.
+
+
+### Helper Scripts
+script to watch bench files being created in the locked_circuits directory:
+``` \bin\bash
+    watch -n 1 ls -l locked_circuits/
+```
+
+script to watch log files and CSV file being written to
+``` \bin\bash
+    tail -f results/sat_attack_parallel_results.csv
+```
+``` \bin\bash
+    tail -f results/sat_attack_parallel.log
+```

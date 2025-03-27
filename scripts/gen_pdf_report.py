@@ -4,15 +4,14 @@ from matplotlib.backends.backend_pdf import PdfPages
 import os
 
 # File paths
-csv_path = "sat_attack_parallel_results.csv"    # autoparallel_sat_attack.py results file. uncomment to use this.
-# csv_path = "results/sat_attack_results.csv"
+csv_path = "results/sat_attack_parallel_results.csv"
 pdf_path = "results/sat_attack_summary.pdf"
 
 # Ensure the CSV exists
 if not os.path.exists(csv_path):
     raise FileNotFoundError(f"CSV file not found: {csv_path}")
 
-# Load CSV
+# Load CSV data
 df = pd.read_csv(csv_path)
 
 # Generate PDF
@@ -26,7 +25,8 @@ with PdfPages(pdf_path) as pdf:
     table.auto_set_font_size(False)
     table.set_fontsize(8)
     table.scale(1.2, 1.2)
-    ax.set_title("SAT Attack Summary", fontsize=16, pad=20)
+    # Centered title
+    ax.set_title("Fred IoT security Assignement", fontsize=13, pad=20, loc='center')
     pdf.savefig(fig, bbox_inches='tight')
     plt.close(fig)
 
