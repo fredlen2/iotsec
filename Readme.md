@@ -33,7 +33,12 @@ python3 tools/corrupt_and_correct.py c432.bench --keysize 16
 
 
 
-python3 insert_trojan.py c432.bench --trigger_size 3 --num_trojans 50
+# Process all .bench files in `data/` with default settings
+python3 scripts/insert_trojan.py
+
+# Custom trojan insertion for a single file
+python3 scripts/insert_trojan.py --bench_path data/c432.bench --trigger_size 3 --num_trojans 25
+
 
 Hardware Trojan Design
 A minimal Trojan consists of:
