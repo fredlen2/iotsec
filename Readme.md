@@ -1,4 +1,4 @@
-# IoT and Embedded System Security assighnment 1 solution
+# IoT and Embedded System Security assignment solution
 
 First, clone the repository then you can proceed with the below steps which ever may be applicable.
 You can skip the ones that do not apply:
@@ -14,20 +14,27 @@ touch config/circuits.json  # If not already present
 touch results/sat_attack.log  # If not already present
 ```
 
-create a .venv directory in your project folder and activate it with the second line code.
-### Sudo issues run these to create the .venv
+Create a .venv directory in your project folder and activate it with the second line code.
+
+``` \bin\bash
+# Sudo issues run these to create the .venv
 python3 -m pip install --user virtualenv
 python3 -m virtualenv .venv
 
-### No sudo issues
-python3 -m venv .venv
 
+# No sudo issues
+python3 -m venv .venv
+```
+
+Activate virtual environment from project folder:
+``` \bin\bash
 source .venv/bin/activate
+```
 
 ### install python requirements
-
+``` \bin\bash
 pip install -r requirements.txt
-
+```
 
 ## Assignment Task A Scripts Usage:
 
@@ -78,7 +85,7 @@ Generates 50 Trojan-infected files for each circuit.
 Runs Atalanta to check if the Trojan can be detected.
 
 
-### Helper Scripts
+### Sample helper Scripts to monitor the files or file contents creation:
 script to watch bench files being created in the locked_circuits directory:
 ``` \bin\bash
     watch -n 1 ls -l locked_circuits/
