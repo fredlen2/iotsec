@@ -1,4 +1,8 @@
 import argparse
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from tools.utils.utils import parse_bench_file, write_list_to_file
 
 def sarlock_lock(inputs, outputs, gates, keysize):
@@ -22,7 +26,16 @@ def main():
     inputs, outputs, gates, _ = parse_bench_file(args.bench_path)
     key_inputs, locked_gates = sarlock_lock(inputs, outputs, gates, args.keysize)
     all_gates = [f"INPUT({i})" for i in inputs] + [f"OUTPUT({o})" for o in outputs] + locked_gates
-    out_path = args.bench_path.replace(".bench", f"_SARLock_k_{args.keysize}.bench")
+    
+    # Ensure the output directory exists
+    output_dir = "locked_circuits"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Generate output file name based on the input file name
+    base_name = os.path.basename(args.bench_path)
+    out_file = base_name.replace(".bench", f"_SARLock_k_{args.keysize}.bench")
+    out_path = os.path.join(output_dir, out_file)
+    
     write_list_to_file(all_gates, out_path, [1]*args.keysize)
 
 if __name__ == "__main__":
