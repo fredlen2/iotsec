@@ -1,5 +1,5 @@
 import argparse
-from tools.utils import parse_bench_file, write_list_to_file
+from tools.utils.utils import parse_bench_file, write_list_to_file
 
 def sarlock_lock(inputs, outputs, gates, keysize):
     key_inputs = [f"keyinput{i}" for i in range(keysize)]

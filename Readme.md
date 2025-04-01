@@ -48,14 +48,16 @@ python3 scripts/automate_sat_attack.py
 # OR
 
 python3 scripts/autoparallel_sat_attack.py
+
+# The second script proceeds to run python3 scripts/gen_pdf_report.py to convert the output csv to pdf.
 ```
 
 ## Assignment Task B Scripts - provably secure logic locking Usage:
 
 ``` python3
-python3 tools/sarlock.py c432.bench --keysize 16
-python3 tools/antisat.py c432.bench --keysize 16
-python3 tools/corrupt_and_correct.py c432.bench --keysize 16
+python3 scripts/sarlock.py data/c432.bench --keysize 16
+python3 scripts/antisat.py data/c432.bench --keysize 16
+python3 scripts/corrupt_and_correct.py data/c432.bench --keysize 16
 ```
 
 ## Assignment Task C Scripts - Hardware Trojan Design Usage:
