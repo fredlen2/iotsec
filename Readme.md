@@ -50,6 +50,9 @@ python3 scripts/automate_sat_attack.py
 python3 scripts/autoparallel_sat_attack.py
 
 # The second script proceeds to run python3 scripts/gen_pdf_report.py to convert the output csv to pdf.
+# Increase max_workers if the tasks are mostly waiting on external processes 
+(scripts/autoparallel_sat_attack.py line 111). The tools/RLL.py script is not fully optimized.
+    max_workers = 8
 ```
 
 ## Assignment Task B Scripts - provably secure logic locking Usage:
@@ -75,10 +78,10 @@ python3 scripts/insert_trojan.py
 
 ### Trojan insertion for a single file
 ``` python3
-python3 scripts/insert_trojan.py --bench_path data/c432.bench --trigger_size 3 --num_trojans 25
+python3 scripts/insert_trojan.py --bench_path data/c432.bench --trigger_size 3 --num_trojans 50
 ```
 
-The two trojan scripts:
+The two trojan scripts (have their outputs in trojan_injected directory):
 
 Selects random rare nodes as a trigger.
 Adds an AND-based trigger condition.

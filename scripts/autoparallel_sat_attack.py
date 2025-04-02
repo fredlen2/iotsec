@@ -108,7 +108,7 @@ def main():
     results = []
     total_tasks = sum(len(circuit["key_sizes"]) * iterations for circuit in circuits)
     # Increase max_workers if the tasks are mostly waiting on external processes
-    max_workers = 16
+    max_workers = 8
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = []
         for circuit in circuits:
