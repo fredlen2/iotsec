@@ -1,0 +1,85 @@
+{
+    "circuits": [
+        {
+            "name": "c3540",
+            "file": "c3540.bench",
+            "key_sizes": [
+                16,
+                32
+            ]
+        },
+        {
+            "name": "c880",
+            "file": "c880.bench",
+            "key_sizes": [
+                16,
+                32
+            ]
+        },
+        {
+            "name": "c432",
+            "file": "c432.bench",
+            "key_sizes": [
+                16,
+                32
+            ]
+        },
+        {
+            "name": "b20_C",
+            "file": "b20_C.bench",
+            "key_sizes": [
+                128,
+                256
+            ]
+        },
+        {
+            "name": "b21_C",
+            "file": "b21_C.bench",
+            "key_sizes": [
+                128,
+                256
+            ]
+        },
+        {
+            "name": "b17_C",
+            "file": "b17_C.bench",
+            "key_sizes": [
+                128,
+                256
+            ]
+        },
+        {
+            "name": "c1355",
+            "file": "c1355.bench",
+            "key_sizes": [
+                16,
+                32
+            ]
+        },
+        {
+            "name": "b15_C",
+            "file": "b15_C.bench",
+            "key_sizes": [
+                128,
+                256
+            ]
+        },
+        {
+            "name": "b14_C",
+            "file": "b14_C.bench",
+            "key_sizes": [
+                128,
+                256
+            ]
+        },
+        {
+            "name": "b22_C",
+            "file": "b22_C.bench",
+            "key_sizes": [
+                128,
+                256
+            ]
+        }
+    ],
+    "iterations": 10
+}

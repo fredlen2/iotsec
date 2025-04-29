@@ -90,6 +90,30 @@ Generates 50 Trojan-infected files for each circuit.
 Runs Atalanta to check if the Trojan can be detected.
 
 
+### Assignment 2 - Stealthy Trojans
+Run with single command
+``` \bin\bash
+    python3 scripts/all_trojan_locking.py -b data/c432.bench -k=16
+
+    Sample output:    
+        INFO: Running antisat_trojan with keysize=16
+        INFO: Running corrupt_and_correct_trojan with keysize=16
+        INFO: Running sarlock_trojan with keysize=16
+        INFO: All selected techniques completed. Locked circuits are in 'locked_circuits'
+
+```
+OR
+
+Run them separately
+
+``` \bin\bash
+    python3 scripts/antisat_trojan.py  -b data/c432.bench -k 16
+    python3 scripts/corrupt_and_correct_trojan.py -b data/c432.bench -k 16
+    python3 scripts/sarlock_trojan.py -b data/c432.bench -k 16
+
+```
+
+
 ### Sample helper Scripts to monitor the files or file contents creation:
 script to watch bench files being created in the locked_circuits directory:
 ``` \bin\bash
