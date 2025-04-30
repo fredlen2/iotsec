@@ -90,7 +90,8 @@ Generates 50 Trojan-infected files for each circuit.
 Runs Atalanta to check if the Trojan can be detected.
 
 
-### Assignment 2 - Stealthy Trojans
+
+# Assignment 2 - Stealthy Trojans
 Run with single command
 ``` \bin\bash
     python3 scripts/all_trojan_locking.py -b data/c432.bench -k=16

@@ -14,7 +14,7 @@ TOOLS = [
 
 def main():
     p = argparse.ArgumentParser(description="Run all Trojan locks.")
-    p.add_argument("-b", "--bench_path", type=Path, required=True, help="Input .bench file")
+    p.add_argument("-b", "--bench_path", type=Path, required=True, help=".bench file or path")
     p.add_argument("-k", "--keysize",    type=int,  default=16, help="Number of key bits")
     args = p.parse_args()
 
