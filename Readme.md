@@ -95,13 +95,6 @@ Runs Atalanta to check if the Trojan can be detected.
 Run with single command
 ``` \bin\bash
     python3 scripts/all_trojan_locking.py -b data/c432.bench -k=16
-
-    Sample output:    
-        INFO: Running antisat_trojan with keysize=16
-        INFO: Running corrupt_and_correct_trojan with keysize=16
-        INFO: Running sarlock_trojan with keysize=16
-        INFO: All selected techniques completed. Locked circuits are in 'locked_circuits'
-
 ```
 OR
 
