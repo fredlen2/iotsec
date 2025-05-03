@@ -95,7 +95,7 @@ def main():
     save_path = output_dir / f"{bench_path.stem}_SARLock_k_{keysize}.bench"
     write_list_to_file(all_lines, save_path, key)
 
-    print(f"[+] SARLock circuit written to: {save_path}")
+    print(f"SARLock circuit written to: {save_path}")
 
 
 if __name__ == "__main__":
