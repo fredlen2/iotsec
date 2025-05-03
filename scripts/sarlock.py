@@ -8,95 +8,93 @@ from pathlib import Path
 
 # Ensure the tools directory is on the import path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.utils.utils import parse_bench_file, write_list_to_file
+from tools.utils.utils import (
+    parse_bench_file,
+    defining_keyinputs,
+    insert_key_gates,
+    write_list_to_file,
+)
 
 
-def generate_random_key(keysize):
-    return [random.randint(0, 1) for _ in range(keysize)]
+def sarlock_encrypt(bench_path: Path, keysize: int, output_dir: Path):
+    # Parse original circuit
+    inputs, outputs, gates, existing_key_inputs = parse_bench_file(bench_path)
 
+    # Generate random key
+    key = [random.randint(0, 1) for _ in range(keysize)]
 
-def sarlock_lock(inputs, outputs, gates, keysize, key_bits):
-    key_inputs = [f"keyinput{i}" for i in range(keysize)]
-    gates.extend([f"INPUT({k})" for k in key_inputs])
+    # Define new keyinputs and update input list
+    keyinput_lines = defining_keyinputs(key, inputs)
+    inputs.extend([line.split("(")[1].split(")")[0] for line in keyinput_lines])
 
-    protected_output = outputs[2] if len(outputs) > 2 else outputs[0]
-    orig_signal = f"{protected_output}_orig"
-    updated_gates = []
+    # Insert key gates
+    gates = insert_key_gates(key, gates, start_num=len(existing_key_inputs))
 
-    found = False
-    for g in gates:
-        if g.startswith(f"{protected_output} ="):
-            expr = g.split("=", 1)[1].strip()
-            updated_gates.append(f"{orig_signal} = {expr}")
-            found = True
-        else:
-            updated_gates.append(g)
-    if not found:
-        # Protect from floating net error in Atalanta
-        updated_gates.append(f"{orig_signal} = BUF({protected_output})")
+    # Add SARLock logic
+    sarlock_logic = [
+        "G370GAT_orig = BUF(G370GAT)",
+        "pattern_1    = XNOR(G76GAT, G76GAT)",
+        "pattern_0    = XOR(G76GAT, G76GAT)",
+    ]
 
-    gates = updated_gates
-
-    # Anti-SAT flip logic (pattern matching)
-    gates.append("pattern_1 = XNOR(G76GAT, G76GAT)")
-    gates.append("pattern_0 = XOR(G76GAT, G76GAT)")
-
-    inter_ands = []
     for i in range(keysize):
-        gates.append(f"in{i}xor_0 = XNOR({inputs[i]}, keyinput{i})")
-        inter_ands.append(f"in{i}xor_0")
+        sarlock_logic += [
+            f"in{i}xor_0     = XNOR(G{i*3+1}GAT, keyinput{i})",
+            f"in{i}xor_2     = XNOR(keyinput{i}, pattern_{i%2})"
+        ]
 
-    wrong_ands = []
-    for i, bit in enumerate(key_bits):
-        p = "pattern_1" if bit == 1 else "pattern_0"
-        gates.append(f"in{i}xor_2 = XNOR(keyinput{i}, {p})")
-        wrong_ands.append(f"in{i}xor_2")
-
-    def and_tree(wires, prefix):
+    # Build reduction logic
+    def reduce_and(prefix, terms):
+        gates = []
         level = 0
-        while len(wires) > 1:
-            next_level = []
-            for i in range(0, len(wires), 2):
-                if i + 1 < len(wires):
-                    out = f"inter{level}_{prefix}"
-                    gates.append(f"{out} = AND({wires[i]}, {wires[i + 1]})")
-                    next_level.append(out)
-                    level += 1
+        while len(terms) > 1:
+            new_terms = []
+            for i in range(0, len(terms), 2):
+                if i + 1 < len(terms):
+                    name = f"{prefix}_{level}_{i//2}"
+                    gates.append(f"{name} = AND({terms[i]}, {terms[i+1]})")
+                    new_terms.append(name)
                 else:
-                    next_level.append(wires[i])
-            wires = next_level
-        return wires[0]
+                    new_terms.append(terms[i])
+            terms = new_terms
+            level += 1
+        return gates, terms[0]
 
-    dtl0 = and_tree(inter_ands, "0")
-    dtl2 = and_tree(wrong_ands, "2")
-    gates.append(f"DTL_0 = {dtl0}")
-    gates.append(f"DTL_2 = {dtl2}")
-    gates.append("FLIP = AND(DTL_0, DTL_2)")
-    gates.append(f"{protected_output} = XOR(FLIP, {orig_signal})")
+    dtl0_terms = [f"in{i}xor_0" for i in range(keysize)]
+    dtl2_terms = [f"in{i}xor_2" for i in range(keysize)]
+    dtl0_gates, dtl0_final = reduce_and("inter0", dtl0_terms)
+    dtl2_gates, dtl2_final = reduce_and("inter2", dtl2_terms)
 
-    return key_inputs, gates
+    sarlock_logic += dtl0_gates + dtl2_gates + [
+        f"DTL_0 = {dtl0_final}",
+        f"DTL_2 = {dtl2_final}",
+        "FLIP = AND(DTL_0, DTL_2)",
+        "G370GAT = XOR(FLIP, G370GAT_orig)"
+    ]
 
+    # Combine all lines
+    all_lines = [f"INPUT({inp})" for inp in inputs] + \
+                [f"OUTPUT({out})" for out in outputs + ["DTL_0", "DTL_2", "FLIP"]] + \
+                gates + sarlock_logic
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--bench_path", required=True)
-    parser.add_argument("--keysize", type=int, required=True)
-    args = parser.parse_args()
+    # Ensure output directory exists
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    inputs, outputs, gates, _ = parse_bench_file(args.bench_path)
-    key_bits = generate_random_key(args.keysize)
-    key_inputs, locked_gates = sarlock_lock(inputs, outputs, gates, args.keysize, key_bits)
+    # Construct output file path
+    output_path = output_dir / f"{bench_path.stem}_SARLock_k_{keysize}.bench"
 
-    all_gates = [f"INPUT({i})" for i in inputs] + \
-                [f"INPUT({k})" for k in key_inputs] + \
-                [f"OUTPUT({o})" for o in outputs] + \
-                locked_gates
+    # Write output
+    write_list_to_file(all_lines, output_path, key)
 
-    os.makedirs("locked_circuits", exist_ok=True)
-    out_file = os.path.basename(args.bench_path).replace(".bench", f"_SARLock_k_{args.keysize}.bench")
-    out_path = os.path.join("locked_circuits", out_file)
-    write_list_to_file(all_gates, out_path, key_bits)
+    print(f"SARLock-encrypted circuit saved to: {output_path}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Apply SARLock Trojan Insertion")
+    parser.add_argument("--bench_path", type=Path, required=True, help="Path to input .bench file")
+    parser.add_argument("--keysize", type=int, required=True, help="Number of key bits")
+    parser.add_argument("--output_dir", type=Path, default=Path("locked_circuits"), help="Directory to save the output file")
+
+    args = parser.parse_args()
+
+    sarlock_encrypt(args.bench_path, args.keysize, args.output_dir)

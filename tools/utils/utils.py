@@ -60,22 +60,26 @@ def insert_key_gates(key, gates, start_num):
     return gates
 
 
-def write_list_to_file(lst, file_path, key):
+def write_list_to_file(lst, file_path, key, extra_outputs=None):
     key_str = "".join(str(bit) for bit in key)
     key_comment = f"#key={key_str}\n"
 
-    # Identify outputs and ensure FLIP is one of them
-    outputs = [line for line in lst if line.startswith("OUTPUT(")]
-    if not any("FLIP" in output for output in outputs):
-        # Insert FLIP as an output after the last OUTPUT line
-        last_output_index = max(idx for idx, line in enumerate(lst) if line.startswith("OUTPUT("))
-        lst.insert(last_output_index + 1, "OUTPUT(FLIP)")
+    if extra_outputs:
+        outputs = [line for line in lst if line.startswith("OUTPUT(")]
+        existing_outputs = [line.split("(")[1].split(")")[0] for line in outputs]
 
-    # Determine max width before '=' for pretty formatting
+        last_output_index = max(
+            (i for i, line in enumerate(lst) if line.startswith("OUTPUT(")),
+            default=0,
+        )
+        for out_signal in extra_outputs:
+            if out_signal not in existing_outputs:
+                lst.insert(last_output_index + 1, f"OUTPUT({out_signal})")
+                last_output_index += 1
+
     max_length_before_equal = max(
         (item.find("=") for item in lst if "=" in item), default=0
     )
-
     with open(file_path, "w") as file:
         file.write(key_comment)
         lines = [
@@ -87,6 +91,7 @@ def write_list_to_file(lst, file_path, key):
             for item in lst
         ]
         file.writelines(lines)
+
 
 
 # def write_list_to_file(lst, file_path, key):
