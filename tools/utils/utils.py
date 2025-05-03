@@ -61,17 +61,23 @@ def insert_key_gates(key, gates, start_num):
 
 
 def write_list_to_file(lst, file_path, key):
-    # Convert the key list back to a string representation
     key_str = "".join(str(bit) for bit in key)
     key_comment = f"#key={key_str}\n"
-    with open(file_path, "w") as file:
-        # Write the key comment as the first line
-        file.write(key_comment)
 
-        # Then write the rest of the content
-        max_length_before_equal = max(
-            (item.find("=") for item in lst if "=" in item), default=0
-        )
+    # Identify outputs and ensure FLIP is one of them
+    outputs = [line for line in lst if line.startswith("OUTPUT(")]
+    if not any("FLIP" in output for output in outputs):
+        # Insert FLIP as an output after the last OUTPUT line
+        last_output_index = max(idx for idx, line in enumerate(lst) if line.startswith("OUTPUT("))
+        lst.insert(last_output_index + 1, "OUTPUT(FLIP)")
+
+    # Determine max width before '=' for pretty formatting
+    max_length_before_equal = max(
+        (item.find("=") for item in lst if "=" in item), default=0
+    )
+
+    with open(file_path, "w") as file:
+        file.write(key_comment)
         lines = [
             (
                 f"{item.split('=')[0].ljust(max_length_before_equal)}= {item.split('=')[1]}\n"
@@ -81,6 +87,29 @@ def write_list_to_file(lst, file_path, key):
             for item in lst
         ]
         file.writelines(lines)
+
+
+# def write_list_to_file(lst, file_path, key):
+#     # Convert the key list back to a string representation
+#     key_str = "".join(str(bit) for bit in key)
+#     key_comment = f"#key={key_str}\n"
+#     with open(file_path, "w") as file:
+#         # Write the key comment as the first line
+#         file.write(key_comment)
+
+#         # Then write the rest of the content
+#         max_length_before_equal = max(
+#             (item.find("=") for item in lst if "=" in item), default=0
+#         )
+#         lines = [
+#             (
+#                 f"{item.split('=')[0].ljust(max_length_before_equal)}= {item.split('=')[1]}\n"
+#                 if "=" in item
+#                 else f"{item}\n"
+#             )
+#             for item in lst
+#         ]
+#         file.writelines(lines)
 
     # max_length_before_equal = max((item.find('=') for item in lst if '=' in item), default=0)
     # with open(file_path, "w") as file:
