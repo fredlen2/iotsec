@@ -1,7 +1,11 @@
 import argparse
+from pathlib import Path
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.utils.utils import parse_bench_file, write_list_to_file
 

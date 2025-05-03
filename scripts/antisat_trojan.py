@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 
 # Ensure the tools directory is on the import path
-sys.path.insert(0, str(Path(__file__).parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.utils.utils import parse_bench_file, write_list_to_file
 
 
