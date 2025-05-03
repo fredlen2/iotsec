@@ -15,83 +15,93 @@ from tools.utils.utils import (
     write_list_to_file,
 )
 
+def generate_sarlock_circuit(inputs, outputs, gates, key_bits):
+    """Generate the SARLock logic and attach to original circuit."""
+    # Step 1: Select inputs for locking
+    selected_inputs = random.sample([i for i in inputs if "keyinput" not in i], len(key_bits))
+
+    pattern_1 = "pattern_1 = XNOR(G76GAT, G76GAT)"
+    pattern_0 = "pattern_0 = XOR(G76GAT, G76GAT)"
+    gates.extend([pattern_1, pattern_0])
+
+    # Step 2: Create XNOR pairs and patterns
+    xor_lines = []
+    for i, (signal, key_bit) in enumerate(zip(selected_inputs, key_bits)):
+        xor_op = "XNOR"
+        pattern_val = "pattern_1" if (i + int(key_bit)) % 2 == 0 else "pattern_0"
+        xor_lines.append(f"in{i}xor_0 = {xor_op}({signal}, keyinput{i})")
+        xor_lines.append(f"in{i}xor_2 = {xor_op}(keyinput{i}, {pattern_val})")
+
+    gates.extend(xor_lines)
+
+    # Step 3: Build up AND tree logic
+    for p in [0, 2]:
+        and_level_1 = [f"inter{i}_{p} = AND(in{i*2}xor_{p}, in{i*2+1}xor_{p})" for i in range(4)]
+        and_level_2 = [f"inter4_{p} = AND(inter0_{p}, inter1_{p})", f"inter5_{p} = AND(inter2_{p}, inter3_{p})"]
+        and_level_3 = f"inter6_{p} = AND(inter4_{p}, inter5_{p})"
+        gates.extend(and_level_1 + and_level_2 + [and_level_3])
+
+    # Final FLIP logic and G370GAT interception
+    gates.extend([
+        "DTL_0 = inter6_0",
+        "DTL_2 = inter6_2",
+        "FLIP = AND(DTL_0, DTL_2)",
+        "G370GAT_orig = BUF(G370GAT)",
+        "G370GAT = XOR(FLIP, G370GAT_orig)"
+    ])
+
+    # Fix floating outputs
+    outputs.extend(["G370GAT_orig", "FLIP"])
+
+    return inputs, outputs, gates
+
+
+def fix_input_syntax(lines):
+    """Ensure that all non-assignment and non-declared lines are properly wrapped in INPUT()."""
+    fixed = []
+    for line in lines:
+        stripped = line.strip()
+        if (
+            stripped and
+            not stripped.startswith("#") and
+            "=" not in stripped and
+            not stripped.startswith("INPUT(") and
+            not stripped.startswith("OUTPUT(")
+        ):
+            fixed.append(f"INPUT({stripped})\n")
+        else:
+            fixed.append(line if line.endswith("\n") else line + "\n")
+    return fixed
+
+
+def write_sarlock_bench_file(output_path, inputs, outputs, gates, key_bits):
+    with open(output_path, "w") as f:
+        f.write(f"#key={''.join(map(str, key_bits))}\n")
+        for inp in inputs:
+            f.write(f"INPUT({inp})\n")
+        for outp in outputs:
+            f.write(f"OUTPUT({outp})\n")
+        content = [*gates]
+        corrected = fix_input_syntax(content)
+        f.writelines(corrected)
+
 
 def main():
-    parser = argparse.ArgumentParser(description="Apply SARLock Trojan logic locking")
-    parser.add_argument("--bench_path", type=Path, required=True, help="Path to input .bench file")
-    parser.add_argument("--keysize", type=int, required=True, help="Size of the key to embed")
-    parser.add_argument("--output_dir", type=Path, default=Path("locked_circuits"), help="Directory to save locked circuit")
-
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bench_path", type=Path, required=True)
+    parser.add_argument("--keysize", type=int, required=True)
+    parser.add_argument("--output_dir", type=Path, default=Path("locked_circuits"))
     args = parser.parse_args()
-    bench_path = args.bench_path
-    keysize = args.keysize
-    output_dir = args.output_dir
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    key = [random.randint(0, 1) for _ in range(args.keysize)]
+    inputs, outputs, gates, _ = parse_bench_file(args.bench_path)
+    inputs, outputs, gates = generate_sarlock_circuit(inputs, outputs, gates, key)
 
-    # Step 1: Parse the original bench file
-    inputs, outputs, gates, existing_keys = parse_bench_file(bench_path)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = args.output_dir / f"{args.bench_path.stem}_SARLock_k_{args.keysize}.bench"
+    write_sarlock_bench_file(out_path, inputs, outputs, gates, key)
 
-    # Step 2: Generate a random key
-    key = [random.choice([0, 1]) for _ in range(keysize)]
-
-    # Step 3: Define new keyinputs
-    keyinput_lines = defining_keyinputs(key, inputs)
-
-    # Step 4: Prepare SARLock logic
-    original_output = "G370GAT"
-    locked_output = f"{original_output}_orig"
-
-    if original_output in outputs:
-        outputs[outputs.index(original_output)] = locked_output
-    else:
-        raise ValueError(f"{original_output} not found in OUTPUT declarations")
-
-    outputs.append(original_output)
-
-    # Select only real circuit inputs (not keyinputs)
-    real_inputs = [i for i in inputs if not i.startswith("keyinput")]
-    if len(real_inputs) < keysize:
-        raise ValueError("Not enough real inputs to match keysize for SARLock")
-
-    selected_inputs = random.sample(real_inputs, keysize)
-
-    # Build SARLock logic using only selected inputs
-    sarlock_logic = [f"{locked_output} = BUF({original_output})"]
-
-    sarlock_logic += [
-        "pattern_1    = XNOR(G76GAT, G76GAT)",  # always 1
-        "pattern_0    = XOR(G76GAT, G76GAT)"    # always 0
-    ]
-
-    for i in range(keysize):
-        pattern = f"pattern_{i % 2}"
-        sarlock_logic += [
-            f"in{i}xor_0     = XNOR({selected_inputs[i]}, keyinput{i})",
-            f"in{i}xor_2     = XNOR(keyinput{i}, {pattern})"
-        ]
-
-    for j in range(0, keysize, 2):
-        sarlock_logic.append(f"inter{j//2}_0     = AND(in{j}xor_0, in{j+1}xor_0)")
-        sarlock_logic.append(f"inter{j//2}_2     = AND(in{j}xor_2, in{j+1}xor_2)")
-
-    half = keysize // 2
-    for k in range(0, half, 2):
-        sarlock_logic.append(f"inter{k//2+half}_0     = AND(inter{k}_0, inter{k+1}_0)")
-        sarlock_logic.append(f"inter{k//2+half}_2     = AND(inter{k}_2, inter{k+1}_2)")
-
-    # Final DTL and FLIP logic
-    sarlock_logic += [
-        "DTL_0        = inter1_0",
-        "DTL_2        = inter1_2",
-        "FLIP         = AND(DTL_0, DTL_2)",
-        f"{original_output} = XOR(FLIP, {locked_output})"
-    ]
-
-    # Step 5: Merge all and write to file
-    new_circuit = inputs + keyinput_lines + [f"OUTPUT({o})" for o in outputs] + gates + sarlock_logic
-    output_file = output_dir / f"{bench_path.stem}_SARLock_k_{keysize}.bench"
-    write_list_to_file(new_circuit, output_file, key)
+    print(f"[SARLock] Locked circuit written to: {out_path}")
 
 
 if __name__ == "__main__":
