@@ -25,12 +25,6 @@ SARLock logic locking for .bench circuits, following the functional example:
 - Declares DTL_0 and DTL_2 as primary outputs to prevent floating nets
 - Drives final original output via XOR(FLIP, <orig>_enc)
 """
-#!/usr/bin/env python3
-
-import argparse
-import random
-from pathlib import Path
-import os
 
 """
 SARLock logic locking script that matches the working c432_SARLock_k_16_1.bench:
