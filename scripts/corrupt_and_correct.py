@@ -103,8 +103,7 @@ def main():
     full_logic = key_logic + clean_gates + new_gates
     write_bench(output_file, key, inputs, outputs, key_inputs, full_logic)
 
-    print(f"CAC-locked circuit written to: {output_file}")
-    print(f"Key used: {key}")
+    print(f"CAC-locked circuit with key={key} saved to: {output_file}")
 
 if __name__ == "__main__":
     main()
