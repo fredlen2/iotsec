@@ -59,6 +59,8 @@ def write_locked_bench(original_lines, key_bits, filepath, fanin_nodes, protecte
 
     f_lines, fbar_lines, final_lines = [], [], []
     f_outputs, fbar_outputs = [], []
+    declared_wires = set()
+    outputs_to_add = set()
 
     for i in range(keysize):
         xi = fanin_nodes[i]
@@ -71,40 +73,53 @@ def write_locked_bench(original_lines, key_bits, filepath, fanin_nodes, protecte
         f_lines.append(f"{xor_f}=XOR({xi}, {ki})")
         fbar_lines.append(f"{xor_fbar}=XOR({xi}, {not_ki})")
 
+        declared_wires.update([not_ki, xor_f, xor_fbar])
         f_outputs.append(xor_f)
         fbar_outputs.append(xor_fbar)
 
     def build_and_tree(terms, prefix):
         level = 0
         current = terms
+        all_nodes = []
         while len(current) > 1:
             next_level = []
             for i in range(0, len(current), 2):
                 if i + 1 < len(current):
                     out = f"{prefix}_AND_{level}_{i//2}"
                     final_lines.append(f"{out}=AND({current[i]}, {current[i+1]})")
+                    declared_wires.add(out)
                     next_level.append(out)
                 else:
                     next_level.append(current[i])
             current = next_level
             level += 1
-        return current[0]
+        return current[0], all_nodes
 
-    f_root = build_and_tree(f_outputs, "F")
-    fbar_root = build_and_tree(fbar_outputs, "FBAR")
+    f_root, _ = build_and_tree(f_outputs, "F")
+    fbar_root, _ = build_and_tree(fbar_outputs, "FBAR")
 
     antisat_and = "ANTISAT_AND"
     antisat_out = "LOCK_ENABLE"
+    corrupt_val = "CORRUPTED_VAL"
+
     final_lines.append(f"{antisat_and}=AND({f_root}, {fbar_root})")
     final_lines.append(f"{antisat_out}=NOT({antisat_and})")
-
-    corrupt_val = "CORRUPTED_VAL"
     final_lines.append(f"{corrupt_val}=NOT({enc_output})")
     final_lines.append(f"{protected_output}=AND({antisat_out}, {enc_output})")
 
-    # Ensure protected_output is declared in OUTPUT list
+    declared_wires.update([antisat_and, antisat_out, corrupt_val])
+
+    # Ensure protected_output is in OUTPUT
     if f"OUTPUT({protected_output})" not in new_header:
         new_header.append(f"OUTPUT({protected_output})")
+
+    # Add outputs for floating internal signals to avoid Atalanta errors
+    for w in declared_wires:
+        if not any(w in line for line in updated_body + final_lines):
+            outputs_to_add.add(f"OUTPUT({w})")
+    for o in sorted(outputs_to_add):
+        if o not in new_header:
+            new_header.append(o)
 
     with open(filepath, "w") as f:
         f.write('\n'.join(new_header + updated_body + f_lines + fbar_lines + final_lines) + '\n')
