@@ -22,10 +22,11 @@ SARLock Logic Locking (Final Atalanta-Compatible Version)
 - Prevents floating nets and duplicate wire definitions
 - No 3-input XORs or unsupported gates
 - Conforms to Atalanta and SAT compatibility
+Injects logic to flip the target output under wrong key using rare input pattern detection.
 """
 
 def parse_bench(path):
-    with open(path, "r") as f:
+    with open(path, 'r') as f:
         lines = f.readlines()
 
     inputs, outputs, gates = [], [], []
@@ -45,74 +46,98 @@ def generate_key(keysize):
     key_wires = [f"keyinput{i}" for i in range(keysize)]
     return key, key_inputs, key_wires
 
-def inject_sarlock(gates, outputs, key_wires):
-    num_keys = len(key_wires)
-    target_output_line = outputs[-1]
-    target_output = target_output_line.split("(")[1].split(")")[0]
+def get_target_output(outputs):
+    return outputs[0][7:-1]  # strip OUTPUT(...)
 
-    xor_zero = "xor_zero = XOR({0}, {0})".format(target_output)
-    xnor_zero = "xnor_zero = XNOR({0}, {0})".format(target_output)
+def build_tree(inputs):
+    """Recursively AND-reduce a list of signals to a single output."""
+    signals = inputs[:]
+    level = 0
+    tree = []
+    while len(signals) > 1:
+        next_level = []
+        for i in range(0, len(signals), 2):
+            if i + 1 < len(signals):
+                left, right = signals[i], signals[i + 1]
+                node = f"and_dtl{level}_{len(tree)}"
+                tree.append(f"{node} = AND({left}, {right})")
+                next_level.append(node)
+            else:
+                next_level.append(signals[i])
+        signals = next_level
+        level += 1
+    return signals[0], tree
 
-    treeX, treeY = [], []
-    last_X = []
-    last_Y = []
+def build_sarlock_logic(input_signals, key_wires, target):
+    if len(key_wires) > len(input_signals):
+        raise ValueError(f"Key size {len(key_wires)} exceeds number of available inputs {len(input_signals)}.")
 
-    for i in range(num_keys):
-        in_sig = f"G{i * 3 + 1}GAT"  # just pick predictable inputs
-        k = key_wires[i]
-        x0 = f"in{i}_0 = XNOR({in_sig}, {k})"
-        x1 = f"in{i}_1 = XNOR({k}, {'xor_zero' if i % 2 == 0 else 'xnor_zero'})"
-        treeX.append(x0)
-        treeY.append(x1)
+    xor_zero = "xor_zero"
+    xnor_zero = "xnor_zero"
+    logic = [
+        f"{xor_zero} = XOR({target}, {target})",
+        f"{xnor_zero} = XNOR({target}, {target})"
+    ]
 
-    def generate_tree(base_name, wires, suffix):
-        levels = []
-        level = [f"{base_name}0_{i}_{suffix} = AND({wires[2 * i]}, {wires[2 * i + 1]})"
-                 for i in range(len(wires) // 2)]
-        levels.append(level)
-        count = 1
-        while len(level) > 1:
-            prev = level
-            level = [f"{base_name}{count}_{i}_{suffix} = AND({prev[2 * i].split('=')[0].strip()}, {prev[2 * i + 1].split('=')[0].strip()})"
-                     for i in range(len(prev) // 2)]
-            levels.append(level)
-            count += 1
-        return [g for l in levels for g in l], level[0].split('=')[0].strip()
+    dtl0_inputs, dtl2_inputs = [], []
 
-    treeX_logic, dtl0 = generate_tree("and_dtl", [f"in{i}_0" for i in range(num_keys)], "X")
-    treeY_logic, dtl1 = generate_tree("and_dtl", [f"in{i}_1" for i in range(num_keys)], "Y")
+    for i, key in enumerate(key_wires):
+        in_wire = input_signals[i]
+        in0 = f"in{i}_0"
+        in1 = f"in{i}_1"
+        logic.append(f"{in0} = XNOR({in_wire}, {key})")
+        logic.append(f"{in1} = XNOR({key}, {xnor_zero if i % 2 else xor_zero})")
+        dtl0_inputs.append(in0)
+        dtl2_inputs.append(in1)
 
-    dtl2 = "DTL_2 = NAND({0}, {0})".format(dtl1)
-    flip = "FLIP = AND({0}, DTL_2)".format(dtl0)
-    enc = f"{target_output}_enc = XOR(FLIP, {target_output})"
-    final = f"{target_output} = {target_output}_enc"
+    dtl0_out, dtl0_tree = build_tree(dtl0_inputs)
+    dtl2_last, dtl2_tree = build_tree(dtl2_inputs)
 
-    return treeX + treeY + [xor_zero, xnor_zero] + treeX_logic + treeY_logic + [dtl2, flip, enc, final]
+    logic += dtl0_tree + dtl2_tree
+    logic.append(f"DTL_2 = NAND({dtl2_last}, {dtl2_last})")
+    logic.append(f"FLIP = AND({dtl0_out}, DTL_2)")
+    logic.append(f"{target} = XOR(FLIP, {target})")
 
-def write_bench(path, key, inputs, outputs, key_inputs, logic, gates):
-    with open(path, "w") as f:
+    return logic
+
+def write_bench(path, key, inputs, outputs, key_inputs, gates, added_logic):
+    # Remove OUTPUTs not actually used
+    used = set()
+    for line in gates + added_logic:
+        if '=' in line:
+            rhs = line.split('=')[1]
+            tokens = rhs.replace('(', ' ').replace(')', ' ').split()
+            used.update(tokens)
+
+    outputs_clean = [line for line in outputs if line[7:-1] in used]
+
+    with open(path, 'w') as f:
         f.write(f"#key={key}\n")
-        for line in inputs + key_inputs + outputs + gates + logic:
-            f.write(f"{line}\n")
+        for line in inputs + key_inputs + outputs_clean + gates + added_logic:
+            f.write(line.strip() + "\n")
 
 def main():
-    parser = argparse.ArgumentParser(description="SARLock Logic Locking")
-    parser.add_argument("--bench_path", required=True, type=Path, help="Original .bench file")
-    parser.add_argument("--keysize", required=True, type=int, help="Size of locking key")
+    parser = argparse.ArgumentParser(description="SARLock - Secure Logic Locking")
+    parser.add_argument("--bench_path", type=Path, required=True, help="Path to original .bench file")
+    parser.add_argument("--keysize", type=int, required=True, help="Number of key inputs")
     parser.add_argument("--output_path", type=Path, default=Path("locked_circuits"),
-                        help="Directory for output .bench")
+                        help="Directory to save locked .bench")
     args = parser.parse_args()
 
-    args.output_path.mkdir(parents=True, exist_ok=True)
-    bench_name = args.bench_path.stem
-    out_file = args.output_path / f"{bench_name}_SARLock_k_{args.keysize}.bench"
-
-    inputs, outputs, gates = parse_bench(args.bench_path)
+    inputs_bench, outputs_bench, gates = parse_bench(args.bench_path)
     key, key_inputs, key_wires = generate_key(args.keysize)
-    sarlock_logic = inject_sarlock(gates, outputs, key_wires)
-    write_bench(out_file, key, inputs, outputs, key_inputs, sarlock_logic, gates)
+    input_signals = [line[6:-1] for line in inputs_bench]
+    target = get_target_output(outputs_bench)
 
-    print(f"SARLock circuit with Key={key} is saved to: {out_file}")
+    added_logic = build_sarlock_logic(input_signals, key_wires, target)
+
+    args.output_path.mkdir(parents=True, exist_ok=True)
+    out_file = args.output_path / f"{args.bench_path.stem}_SARLock_k_{args.keysize}.bench"
+
+    write_bench(out_file, key, inputs_bench, outputs_bench, key_inputs, gates, added_logic)
+
+    print(f"Locked circuit written to: {out_file}")
+    print(f"SARLock key: {key}")
 
 if __name__ == "__main__":
     main()
