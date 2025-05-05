@@ -15,7 +15,6 @@ from pathlib import Path
 #     write_list_to_file,
 # )
 
-#!/usr/bin/env python3
 """
 SARLock Logic Locking (Final Atalanta-Compatible Version)
 - Selects target output automatically
@@ -24,10 +23,6 @@ SARLock Logic Locking (Final Atalanta-Compatible Version)
 - No 3-input XORs or unsupported gates
 - Conforms to Atalanta and SAT compatibility
 """
-
-import argparse
-import random
-from pathlib import Path
 
 def parse_bench(path):
     with open(path, "r") as f:
