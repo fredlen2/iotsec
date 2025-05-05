@@ -29,11 +29,12 @@ def write_locked_bench(original_lines, key_bits, filepath, fanin_nodes, protecte
     for line in original_lines:
         if not in_body and '=' in line:
             in_body = True
-        (body if in_body else header).append(line)
+        (body if in_body else header).append(line.strip())
 
-    inputs = [line.strip() for line in header if line.startswith("INPUT(")]
-    outputs = [line.strip() for line in header if line.startswith("OUTPUT(")]
+    inputs = [line for line in header if line.startswith("INPUT(")]
+    outputs = [line for line in header if line.startswith("OUTPUT(")]
 
+    # Generate header
     new_header = [f"#key={''.join(key_bits)}"] + inputs
     for i in range(keysize):
         new_header.append(f"INPUT(KEYINPUT{i})")
@@ -41,12 +42,20 @@ def write_locked_bench(original_lines, key_bits, filepath, fanin_nodes, protecte
 
     updated_body = []
     enc_output = f"{protected_output}_enc"
+    protected_output_declared = False
+
     for line in body:
-        if line.startswith(f"{protected_output} ="):
+        line = line.strip()
+        if line.startswith(f"{protected_output}="):
             rhs = line.split("=")[1].strip()
-            updated_body.append(f"{enc_output} = {rhs}")
+            updated_body.append(f"{enc_output}={rhs}")
+            protected_output_declared = True
         else:
             updated_body.append(line)
+
+    # If protected_output has no assignment in body, just wire it into enc_output
+    if not protected_output_declared:
+        updated_body.append(f"{enc_output}={protected_output}")
 
     f_lines, fbar_lines, final_lines = [], [], []
     f_outputs, fbar_outputs = [], []
@@ -58,9 +67,9 @@ def write_locked_bench(original_lines, key_bits, filepath, fanin_nodes, protecte
         xor_f = f"XOR_F_{i}"
         xor_fbar = f"XOR_FBAR_{i}"
 
-        f_lines.append(f"{not_ki} = NOT({ki})")
-        f_lines.append(f"{xor_f} = XOR({xi}, {ki})")
-        fbar_lines.append(f"{xor_fbar} = XOR({xi}, {not_ki})")
+        f_lines.append(f"{not_ki}=NOT({ki})")
+        f_lines.append(f"{xor_f}=XOR({xi}, {ki})")
+        fbar_lines.append(f"{xor_fbar}=XOR({xi}, {not_ki})")
 
         f_outputs.append(xor_f)
         fbar_outputs.append(xor_fbar)
@@ -73,7 +82,7 @@ def write_locked_bench(original_lines, key_bits, filepath, fanin_nodes, protecte
             for i in range(0, len(current), 2):
                 if i + 1 < len(current):
                     out = f"{prefix}_AND_{level}_{i//2}"
-                    final_lines.append(f"{out} = AND({current[i]}, {current[i+1]})")
+                    final_lines.append(f"{out}=AND({current[i]}, {current[i+1]})")
                     next_level.append(out)
                 else:
                     next_level.append(current[i])
@@ -86,15 +95,19 @@ def write_locked_bench(original_lines, key_bits, filepath, fanin_nodes, protecte
 
     antisat_and = "ANTISAT_AND"
     antisat_out = "LOCK_ENABLE"
-    final_lines.append(f"{antisat_and} = AND({f_root}, {fbar_root})")
-    final_lines.append(f"{antisat_out} = NOT({antisat_and})")
+    final_lines.append(f"{antisat_and}=AND({f_root}, {fbar_root})")
+    final_lines.append(f"{antisat_out}=NOT({antisat_and})")
 
     corrupt_val = "CORRUPTED_VAL"
-    final_lines.append(f"{corrupt_val} = NOT({enc_output})")
-    final_lines.append(f"{protected_output} = AND({antisat_out}, {enc_output})")
+    final_lines.append(f"{corrupt_val}=NOT({enc_output})")
+    final_lines.append(f"{protected_output}=AND({antisat_out}, {enc_output})")
+
+    # Ensure protected_output is declared in OUTPUT list
+    if f"OUTPUT({protected_output})" not in new_header:
+        new_header.append(f"OUTPUT({protected_output})")
 
     with open(filepath, "w") as f:
-        f.write('\n'.join(new_header + updated_body + ["# BEGIN ANTISAT LOGIC"] + f_lines + fbar_lines + final_lines + ["# END ANTISAT LOGIC"]) + '\n')
+        f.write('\n'.join(new_header + updated_body + f_lines + fbar_lines + final_lines) + '\n')
 
 def extract_primary_output(lines):
     for line in lines:

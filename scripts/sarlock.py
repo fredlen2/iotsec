@@ -27,126 +27,128 @@ SARLock logic locking for .bench circuits, following the functional example:
 """
 
 def split_bench(lines):
-    """Split .bench file lines into header (PI/PO) and body."""
     header, body = [], []
     in_body = False
-    for line in lines:
-        if not in_body and '=' in line:
+    for ln in lines:
+        if not in_body and '=' in ln:
             in_body = True
-        (body if in_body else header).append(line)
+        if in_body:
+            body.append(ln)
+        else:
+            header.append(ln)
     return header, body
 
-def parse_ios(header):
-    """Extract primary inputs and outputs from header."""
-    inputs, outputs = [], []
-    for line in header:
-        line = line.strip()
-        if line.startswith("INPUT("):
-            inputs.append(line)
-        elif line.startswith("OUTPUT("):
-            outputs.append(line)
-    return inputs, outputs
+def parse_header(header):
+    pis, pos = [], []
+    for ln in header:
+        l = ln.strip()
+        if l.startswith('INPUT('):
+            pis.append(l)
+        elif l.startswith('OUTPUT('):
+            pos.append(l)
+    return pis, pos
 
-def generate_key(keysize):
-    return ''.join(random.choice("01") for _ in range(keysize))
+def generate_random_key(k):
+    return ''.join(random.choice('01') for _ in range(k))
 
 def build_and_tree(terms, prefix, logic):
-    """Builds a balanced AND tree for a list of terms."""
-    level = 0
-    current = terms
-    while len(current) > 1:
-        next_level = []
-        for i in range(0, len(current), 2):
-            if i + 1 < len(current):
-                out = f"{prefix}_{level}_{i//2}"
-                logic.append(f"{out} = AND({current[i]}, {current[i+1]})")
-                next_level.append(out)
+    lvl = 0
+    cur = terms
+    while len(cur) > 1:
+        nxt = []
+        for j in range(0, len(cur), 2):
+            if j+1 < len(cur):
+                out = f'{prefix}_{lvl}_{j//2}'
+                logic.append(f'{out} = AND({cur[j]}, {cur[j+1]})')
+                nxt.append(out)
             else:
-                next_level.append(current[i])
-        current = next_level
-        level += 1
-    return current[0]
+                nxt.append(cur[j])
+        cur = nxt
+        lvl += 1
+    return cur[0]
 
-def generate_sarlock_logic(pis_nets, key_bits, keysize, protected_output):
+def generate_sarlock_logic(key_bits, pis_nets, orig_output):
     logic = []
-    xor_terms_0, xor_terms_2 = [], []
+    # SARLock patterns
+    logic.append(f"pattern_1 = XNOR({orig_output}, {orig_output})")
+    logic.append(f"pattern_0 = XOR({orig_output}, {orig_output})")
 
-    # Pattern constants (always used)
-    logic.append(f"pattern_1 = XNOR({protected_output}, {protected_output})")
-    logic.append(f"pattern_0 = XOR({protected_output}, {protected_output})")
+    t0_terms, t2_terms = [], []
+    for i, bit in enumerate(key_bits):
+        logic.append(f"in{i}_0 = XNOR({pis_nets[i]}, keyinput{i})")
+        logic.append(f"in{i}_2 = XNOR(keyinput{i}, {'pattern_1' if bit == '1' else 'pattern_0'})")
+        t0_terms.append(f"in{i}_0")
+        t2_terms.append(f"in{i}_2")
 
-    # Comparators and pattern match
-    for i in range(keysize):
-        pi = pis_nets[i]
-        logic.append(f"in{i}_0 = XNOR({pi}, keyinput{i})")
-        xor_terms_0.append(f"in{i}_0")
+    t0 = build_and_tree(t0_terms, 'd0', logic)
+    t2 = build_and_tree(t2_terms, 'd2', logic)
 
-        pattern = 'pattern_1' if key_bits[i] == '1' else 'pattern_0'
-        logic.append(f"in{i}_2 = XNOR(keyinput{i}, {pattern})")
-        xor_terms_2.append(f"in{i}_2")
+    logic.append(f"DTL_0 = {t0}")
+    logic.append(f"DTL_2 = NAND({t2}, {t2})")  # per SARLock design
+    logic.append(f"FLIP = AND(DTL_0, DTL_2)")
+    logic.append(f"{orig_output} = XOR(FLIP, {orig_output}_enc)")
 
-    # AND trees
-    dtl0 = build_and_tree(xor_terms_0, "d0", logic)
-    dtl2_in = build_and_tree(xor_terms_2, "d2", logic)
+    return logic, ['DTL_0', 'DTL_2', 'FLIP', f"{orig_output}_enc"]
 
-    logic.append(f"DTL_0 = {dtl0}")
-    logic.append(f"DTL_2 = NAND({dtl2_in}, {dtl2_in})")
-    logic.append("FLIP = AND(DTL_0, DTL_2)")
-
-    # Final XOR with locked output
-    logic.append(f"{protected_output} = XOR(FLIP, {protected_output}_enc)")
-
-    return logic
-
-def insert_sarlock_logic(bench_path, output_path, keysize, protected_output='G370GAT'):
+def insert_sarlock(bench_path, output_path, keysize, orig_output='G370GAT'):
     lines = Path(bench_path).read_text().splitlines()
     header, body = split_bench(lines)
-    inputs, outputs = parse_ios(header)
-    pis_nets = [line[6:-1] for line in inputs]  # Strip "INPUT(...)" to get names
+    pis, pos = parse_header(header)
+    pis_nets = [line[6:-1] for line in pis]
 
-    key = generate_key(keysize)
+    key = generate_random_key(keysize)
     key_bits = list(key)
-    enc_output = f"{protected_output}_enc"
+    enc_output = f"{orig_output}_enc"
 
-    # Modify header
-    new_header = [f"#key={key}"] + inputs
+    new_header = [f"#key={key}"] + pis
     for i in range(keysize):
         new_header.append(f"INPUT(keyinput{i})")
-    new_header += outputs
+    new_outputs = set([ln[7:-1] for ln in pos])
+    new_outputs.add(orig_output)
 
-    # Ensure no floating key outputs
-    sarlock_extra_outputs = ['DTL_0', 'DTL_2', 'FLIP', enc_output]
-    for signal in sarlock_extra_outputs:
-        if not any(signal in line for line in lines) and f"OUTPUT({signal})" not in new_header:
-            new_header.append(f"OUTPUT({signal})")
-
-    # Rename protected_output assignment to *_enc
+    # body logic transformation
     new_body = []
-    for line in body:
-        if line.startswith(f"{protected_output} ="):
-            rhs = line.split("=", 1)[1].strip()
+    for ln in body:
+        l = ln.strip()
+        if l.startswith(f"{orig_output} ") and '=' in l:
+            rhs = l.split('=', 1)[1].strip()
             new_body.append(f"{enc_output} = {rhs}")
         else:
-            new_body.append(line)
+            new_body.append(l)
 
-    # Append SARLock logic
-    sarlock_logic = generate_sarlock_logic(pis_nets, key_bits, keysize, protected_output)
-    new_body += ["# BEGIN SARLOCK LOGIC"] + sarlock_logic + ["# END SARLOCK LOGIC"]
+    # add SARLock logic
+    sarlock_logic, extra_signals = generate_sarlock_logic(key_bits, pis_nets, orig_output)
+    new_body.append("# BEGIN SARLOCK LOGIC")
+    new_body.extend(sarlock_logic)
+    new_body.append("# END SARLOCK LOGIC")
 
-    # Write to file
+    # Ensure extra signals are declared as OUTPUT if not used
+    all_lhs = {line.split('=')[0].strip() for line in new_body if '=' in line}
+    all_rhs = set()
+    for line in new_body:
+        if '=' in line:
+            _, rhs = line.split('=')
+            all_rhs.update(rhs.strip().replace(')', '').replace('(', '').replace(',', ' ').split())
+
+    floating = [sig for sig in extra_signals if sig in all_lhs and sig not in all_rhs and sig not in new_outputs]
+    for sig in floating:
+        new_header.append(f"OUTPUT({sig})")
+
+    # final output
+    new_header += [f"OUTPUT({o})" for o in new_outputs if f"OUTPUT({o})" not in new_header]
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text('\n'.join(new_header + new_body) + '\n')
     print(f"SARLock with key={key} written to {output_path}")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Insert SARLock logic into a .bench file.")
-    parser.add_argument('--bench_path', required=True, help='Input .bench file path')
-    parser.add_argument('--keysize', type=int, default=16, help='Number of key bits')
-    parser.add_argument('--output_path', type=Path, default=Path('locked_circuits'), help='Output file or directory')
+    parser = argparse.ArgumentParser(description="Insert SARLock logic into .bench")
+    parser.add_argument('--bench_path', required=True)
+    parser.add_argument('--keysize', type=int, default=16)
+    parser.add_argument('--output_path', type=Path, default=Path('locked_circuits'))
     args = parser.parse_args()
 
     out = args.output_path
     if out.suffix == '' or str(out).endswith(os.sep):
         out = Path(out) / f"{Path(args.bench_path).stem}_SARLock_k_{args.keysize}.bench"
 
-    insert_sarlock_logic(args.bench_path, out, args.keysize)
+    insert_sarlock(args.bench_path, out, args.keysize)

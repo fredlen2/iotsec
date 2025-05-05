@@ -7,11 +7,14 @@ import sys
 import os
 
 # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 # from tools.utils.utils import parse_bench_file, write_list_to_file
 
 """
-Corrupt-and-Correct Logic Locking
+Corrupt-and-Correct Logic Locking (CAC) Implementation
+- Replaces original gate output with XOR(obfuscated, key)
+- Prevents floating nets and duplicate assignments
+- Conforms to paper: corrupted signal must propagate
+- Compatible with Atalanta and SAT tools
 """
 
 import argparse
@@ -33,20 +36,17 @@ def parse_bench(path):
             gates.append(line)
     return inputs, outputs, gates
 
-def extract_gate_outputs(gates):
-    return {line.split("=")[0].strip() for line in gates}
-
 def generate_key(keysize):
     key = ''.join(random.choice("01") for _ in range(keysize))
-    key_decls = [f"INPUT(KEYINPUT{i})" for i in range(keysize)]
+    key_inputs = [f"INPUT(KEYINPUT{i})" for i in range(keysize)]
     key_wires = [f"KEYINPUT{i}" for i in range(keysize)]
-    return key, key_decls, key_wires
+    return key, key_inputs, key_wires
 
-def corrupt_and_correct(gates, key_wires, keysize, outputs_set):
-    new_gates = []
-    key_logic = []
-    extra_outputs = []
+def corrupt_and_correct(gates, key_wires, keysize):
     used_idxs = set()
+    corrupted_map = {}
+    key_logic = []
+    new_gates = []
 
     for i in range(keysize):
         while True:
@@ -55,52 +55,56 @@ def corrupt_and_correct(gates, key_wires, keysize, outputs_set):
                 used_idxs.add(idx)
                 break
 
-        original_gate = gates[idx]
-        left, right = original_gate.split("=")
+        original_line = gates[idx]
+        left, right = original_line.split("=")
         left = left.strip()
         right = right.strip()
-
-        corrupted_wire = f"{left}_CORRUPT"
         key = key_wires[i]
+        corrupt_wire = f"{left}_CORRUPT"
 
-        key_logic.append(f"{corrupted_wire} = {right}")
-        new_gates.append(f"{left} = XOR({corrupted_wire}, {key})")
+        # Store mapping: left was corrupted
+        corrupted_map[left] = corrupt_wire
 
-        if left not in outputs_set:
-            extra_outputs.append(f"OUTPUT({left})")
+        # Replace original with corrupt version and XOR
+        key_logic.append(f"{corrupt_wire} = {right}")
+        new_gates.append(f"{left} = XOR({corrupt_wire}, {key})")
 
-    return new_gates, key_logic, extra_outputs
+        # Mark original gate as removed
+        gates[idx] = None
 
-def write_bench(path, key, inputs, outputs, gates, key_inputs, key_logic, corrupted_gates, extra_outputs):
+    # Remove original corrupted gates
+    clean_gates = [g for g in gates if g is not None]
+    return clean_gates, key_logic, new_gates
+
+def write_bench(path, key, inputs, outputs, key_inputs, logic):
     with open(path, 'w') as f:
         f.write(f"#key={key}\n")
-        for line in inputs + key_inputs + outputs + extra_outputs + key_logic + gates + corrupted_gates:
+        for line in inputs + key_inputs + outputs + logic:
             f.write(f"{line}\n")
 
 def main():
-    parser = argparse.ArgumentParser(description="Corrupt-and-Correct Logic Locking (with key header)")
+    parser = argparse.ArgumentParser(description="Corrupt-and-Correct Logic Locking")
     parser.add_argument("--bench_path", required=True, type=Path, help="Path to original .bench file")
-    parser.add_argument("--keysize", required=True, type=int, help="Number of key inputs to use")
+    parser.add_argument("--keysize", required=True, type=int, help="Key size for CAC locking")
     parser.add_argument("--output_path", type=Path, default=Path("locked_circuits"),
-                        help="Directory for locked circuit output")
-
+                        help="Output directory for locked .bench file")
     args = parser.parse_args()
 
+    # Prepare output path
     args.output_path.mkdir(parents=True, exist_ok=True)
     bench_name = args.bench_path.stem
     output_file = args.output_path / f"{bench_name}_CACLock_k_{args.keysize}.bench"
 
+    # Parse and process
     inputs, outputs, gates = parse_bench(args.bench_path)
-    output_set = {line.split("(")[1].split(")")[0] for line in outputs}
-    key, key_inputs_decl, key_wires = generate_key(args.keysize)
+    key, key_inputs, key_wires = generate_key(args.keysize)
+    clean_gates, key_logic, new_gates = corrupt_and_correct(gates, key_wires, args.keysize)
 
-    corrupted_gates, key_logic, extra_outputs = corrupt_and_correct(
-        gates, key_wires, args.keysize, output_set
-    )
+    full_logic = key_logic + clean_gates + new_gates
+    write_bench(output_file, key, inputs, outputs, key_inputs, full_logic)
 
-    write_bench(output_file, key, inputs, outputs, gates, key_inputs_decl, key_logic, corrupted_gates, extra_outputs)
-
-    print(f"CAC-locked circuit with key={key} written to: {output_file}")
+    print(f"CAC-locked circuit written to: {output_file}")
+    print(f"Key used: {key}")
 
 if __name__ == "__main__":
     main()
