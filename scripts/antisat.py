@@ -10,143 +10,140 @@ import random
 # sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # from tools.utils.utils import parse_bench_file, write_list_to_file
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Insert Anti-SAT locking.")
+"""
+Anti-SAT Logic Locking Script
+- Inserts provably secure Anti-SAT logic
+- Avoids floating nets (e.g., KEYINPUT_NOTx)
+- Compatible with Atalanta ATPG and SAT tools
+"""
+
+def parse_bench(path):
+    with open(path, 'r') as f:
+        lines = f.readlines()
+    inputs, outputs, gates = [], [], []
+    for line in lines:
+        line = line.strip()
+        if line.startswith("INPUT("):
+            inputs.append(line)
+        elif line.startswith("OUTPUT("):
+            outputs.append(line)
+        elif '=' in line:
+            gates.append(line)
+    return inputs, outputs, gates
+
+def generate_key(keysize):
+    key = ''.join(random.choice('01') for _ in range(keysize))
+    key_inputs = [f"INPUT(KEYINPUT{i})" for i in range(keysize)]
+    key_wires = [f"KEYINPUT{i}" for i in range(keysize)]
+    return key, key_inputs, key_wires
+
+def build_antisat_logic(key_wires, target_inputs):
+    logic = []
+    used_keys = []
+    xor_f = []
+    xor_fbar = []
+    keyinput_nots = []
+
+    for i, (key, inp) in enumerate(zip(key_wires, target_inputs)):
+        ki_not = f"KEYINPUT_NOT{i}"
+        logic.append(f"{ki_not}=NOT({key})")
+        xor_f.append(f"XOR_F_{i}=XOR({inp},{key})")
+        xor_fbar.append(f"XOR_FBAR_{i}=XOR({inp},{ki_not})")
+        keyinput_nots.append(ki_not)
+        used_keys.append(key)
+
+    def layer_and(name, inputs):
+        output = []
+        for i in range(0, len(inputs), 2):
+            a = inputs[i]
+            b = inputs[i+1]
+            out = f"{name}_{i//2}"
+            logic.append(f"{out}=AND({a},{b})")
+            output.append(out)
+        return output
+
+    # Build F and FBAR trees
+    f_layer = xor_f
+    fbar_layer = xor_fbar
+    while len(f_layer) > 1:
+        f_layer = layer_and("F_AND", f_layer)
+    while len(fbar_layer) > 1:
+        fbar_layer = layer_and("FBAR_AND", fbar_layer)
+
+    # Final AND and NOT
+    logic.append(f"ANTISAT_AND=AND({f_layer[0]},{fbar_layer[0]})")
+    logic.append("LOCK_ENABLE=NOT(ANTISAT_AND)")
+
+    return logic, keyinput_nots
+
+def main():
+    parser = argparse.ArgumentParser(description="Anti-SAT Logic Locking")
     parser.add_argument("--bench_path", type=Path, required=True, help="Input .bench file")
     parser.add_argument("--keysize", type=int, required=True, help="Key size")
     parser.add_argument("--output_path", type=Path, default=Path("locked_circuits"),
                         help="Output directory")
-    return parser.parse_args()
 
-def generate_key(keysize):
-    return ''.join(random.choice("01") for _ in range(keysize))
-
-def parse_bench(path):
-    with open(path) as f:
-        lines = [line.strip() for line in f if line.strip()]
-    inputs, outputs, logic = [], [], []
-    for line in lines:
-        if line.startswith("INPUT("): inputs.append(line)
-        elif line.startswith("OUTPUT("): outputs.append(line)
-        elif "=" in line: logic.append(line)
-    return inputs, outputs, logic
-
-def extract_protected_output(outputs):
-    return outputs[0][7:-1]
-
-def extract_fanin(logic, count):
-    fanin = []
-    for line in logic:
-        if "=" in line:
-            rhs = line.split("=")[1]
-            if "(" in rhs and ")" in rhs:
-                args = [x.strip() for x in rhs[rhs.find("(")+1:rhs.find(")")].split(",")]
-                for a in args:
-                    if a not in fanin:
-                        fanin.append(a)
-                    if len(fanin) == count:
-                        return fanin
-    return fanin[:count]
-
-def build_and_tree(nodes, prefix, lines, used_names):
-    level = 0
-    while len(nodes) > 1:
-        next_level = []
-        for i in range(0, len(nodes), 2):
-            if i + 1 < len(nodes):
-                out = f"{prefix}_{level}_{i//2}"
-                lines.append(f"{out}=AND({nodes[i]},{nodes[i+1]})")
-                used_names.add(out)
-                next_level.append(out)
-            else:
-                next_level.append(nodes[i])
-        nodes = next_level
-        level += 1
-    return nodes[0]
-
-def write_bench(path, key, inputs, outputs, logic, antisat_logic, used_names):
-    all_lines = [f"#key={key}"] + inputs
-    for i in range(len(key)):
-        all_lines.append(f"INPUT(KEYINPUT{i})")
-    all_lines += outputs
-    all_lines += logic + antisat_logic
-
-    # Add OUTPUTs for unused signals to avoid floating nets
-    logic_signals = set()
-    for line in logic + antisat_logic:
-        lhs = line.split("=")[0]
-        logic_signals.add(lhs)
-
-    outputs_signals = {o[7:-1] for o in outputs}
-    for signal in logic_signals:
-        if signal not in outputs_signals and not any(f"{signal}=" in l for l in all_lines if l.startswith("OUTPUT(")):
-            all_lines.append(f"OUTPUT({signal})")
-
-    with open(path, "w") as f:
-        f.write('\n'.join(all_lines) + '\n')
-
-def build_antisat_logic(fanin_nodes, keysize, protected_output):
-    logic = []
-    used = set()
-    xor_f, xor_fbar = [], []
-
-    for i in range(keysize):
-        ki = f"KEYINPUT{i}"
-        ni = f"KEYINPUT_NOT{i}"
-        xi = fanin_nodes[i]
-        f = f"XOR_F_{i}"
-        fb = f"XOR_FBAR_{i}"
-
-        logic.append(f"{ni}=NOT({ki})")
-        logic.append(f"{f}=XOR({xi},{ki})")
-        logic.append(f"{fb}=XOR({xi},{ni})")
-        xor_f.append(f)
-        xor_fbar.append(fb)
-
-        used.update([ni, f, fb])
-
-    f_root = build_and_tree(xor_f, "F_AND", logic, used)
-    fbar_root = build_and_tree(xor_fbar, "FBAR_AND", logic, used)
-
-    logic.append(f"ANTISAT_AND=AND({f_root},{fbar_root})")
-    logic.append("LOCK_ENABLE=NOT(ANTISAT_AND)")
-    enc_output = f"{protected_output}_enc"
-    logic.append(f"CORRUPTED_VAL=NOT({enc_output})")
-    logic.append(f"{protected_output}=AND(LOCK_ENABLE,{enc_output})")
-
-    used.update(["ANTISAT_AND", "LOCK_ENABLE", "CORRUPTED_VAL", protected_output])
-    return logic, used
-
-def main():
-    args = parse_args()
+    args = parser.parse_args()
     args.output_path.mkdir(parents=True, exist_ok=True)
-    out_path = args.output_path / f"{args.bench_path.stem}_AntiSatLock_k_{args.keysize}.bench"
 
-    inputs, outputs, logic = parse_bench(args.bench_path)
-    key = generate_key(args.keysize)
-    key_bits = list(key)
+    bench_name = args.bench_path.stem
+    out_file = args.output_path / f"{bench_name}_AntiSAT_k_{args.keysize}.bench"
 
-    protected_output = extract_protected_output(outputs)
-    fanin_nodes = extract_fanin(logic, args.keysize)
+    inputs, outputs, gates = parse_bench(args.bench_path)
+    key, key_input_decls, key_wires = generate_key(args.keysize)
 
-    # Replace protected_output assignment with _enc
-    new_logic = []
-    enc_output = f"{protected_output}_enc"
-    found = False
-    for line in logic:
-        if line.startswith(f"{protected_output}="):
-            rhs = line.split("=")[1]
-            new_logic.append(f"{enc_output}={rhs}")
-            found = True
+    # Select keysize number of input wires for XORing
+    primary_inputs = [line[6:-1] for line in inputs]
+    target_inputs = random.sample(primary_inputs, args.keysize)
+
+    # Use the first output for protection
+    output_names = [line[7:-1] for line in outputs]
+    target_output = output_names[0]
+
+    # Find and rename target output's logic to *_enc
+    new_gates = []
+    replaced = False
+    for line in gates:
+        parts = line.split('=')
+        if len(parts) != 2:
+            continue
+        left = parts[0].strip()
+        right = parts[1].strip()
+        if left == target_output:
+            new_gates.append(f"{target_output}_enc={right}")
+            replaced = True
         else:
-            new_logic.append(line)
-    if not found:
-        new_logic.append(f"{enc_output}={protected_output}")
+            new_gates.append(f"{left}={right}")
 
-    antisat_logic, used = build_antisat_logic(fanin_nodes, args.keysize, protected_output)
+    if not replaced:
+        raise ValueError(f"[!] Could not find assignment for protected output: {target_output}")
 
-    write_bench(out_path, key, inputs, outputs, new_logic, antisat_logic, used)
-    print(f"Anti-SAT locked file with key={key} saved to: {out_path}")
+    # Add final protected output logic
+    new_gates.append(f"{target_output}=AND(LOCK_ENABLE,{target_output}_enc)")
+
+    # Build AntiSAT logic
+    antisat_logic, keyinput_nots = build_antisat_logic(key_wires, target_inputs)
+
+    # Build output
+    full_lines = []
+    full_lines.append(f"#key={key}")
+    full_lines.extend(inputs)
+    full_lines.extend(key_input_decls)
+    full_lines.extend(outputs)
+    full_lines.extend(new_gates)
+    full_lines.extend(antisat_logic)
+
+    # Add keyinput_nots as OUTPUTs to avoid floating nets
+    for name in keyinput_nots:
+        full_lines.append(f"OUTPUT({name})")
+
+    with open(out_file, 'w') as f:
+        for line in full_lines:
+            f.write(f"{line}\n")
+
+    print(f"[✓] Anti-SAT locked circuit written to {out_file}")
+    print(f"[✓] Target output: {target_output}")
+    print(f"[✓] Key used: {key}")
 
 if __name__ == "__main__":
     main()
