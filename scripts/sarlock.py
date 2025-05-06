@@ -15,15 +15,9 @@ from pathlib import Path
 #     write_list_to_file,
 # )
 
-#!/usr/bin/env python3
-
-import argparse
-import random
-import os
-
 def parse_bench(path):
     inputs, outputs, gates = [], [], []
-    with open(path, "r") as f:
+    with open(path, 'r') as f:
         for line in f:
             line = line.strip()
             if line.startswith("INPUT("):
@@ -34,100 +28,104 @@ def parse_bench(path):
                 gates.append(line)
     return inputs, outputs, gates
 
-def generate_key(k):
-    bits = [random.choice("01") for _ in range(k)]
-    return "".join(bits)
+def generate_key(keysize):
+    key_bits = [random.choice("01") for _ in range(keysize)]
+    key_str = ''.join(key_bits)
+    key_inputs = [f"keyinput{i}" for i in range(keysize)]
+    return key_str, key_inputs, key_bits
 
-def build_sarlock_logic(inputs, keyinputs, target, key_bits):
-    gates = []
-
-    # Generate XNOR comparator trees
-    compare_xnor = []
-    pattern_xnor = []
-    logic_zero = f"ZERO_X = XOR({target}, {target})"
-    logic_one = f"ONE_X = XNOR({target}, {target})"
-    gates += [logic_zero, logic_one]
-
-    for i, key in enumerate(keyinputs):
-        x0 = f"match_{i}"
-        x1 = f"pattern_{i}"
-        gates.append(f"{x0} = XNOR({inputs[i]}, {key})")
-        pat = "ONE_X" if key_bits[i] == "1" else "ZERO_X"
-        gates.append(f"{x1} = XNOR({key}, {pat})")
-        compare_xnor.append(x0)
-        pattern_xnor.append(x1)
-
-    # AND trees
-    def and_reduce(inputs, label):
-        nodes = inputs
-        level = 0
-        count = 0
-        results = []
-        while len(nodes) > 1:
-            next_level = []
-            for i in range(0, len(nodes), 2):
-                if i + 1 < len(nodes):
-                    name = f"{label}_{level}_{count}"
-                    results.append(f"{name} = AND({nodes[i]}, {nodes[i+1]})")
-                    next_level.append(name)
-                    count += 1
-                else:
-                    next_level.append(nodes[i])
-            nodes = next_level
-            level += 1
-        root = f"{label}_root"
-        results.append(f"{root} = {nodes[0]}")
-        return root, results
-
-    dtl0_root, dtl0_gates = and_reduce(compare_xnor, "cmp0")
-    dtl1_root, dtl1_gates = and_reduce(pattern_xnor, "cmp1")
-
-    gates += dtl0_gates + dtl1_gates
-    gates.append(f"DTL_0 = {dtl0_root}")
-    gates.append(f"DTL_2 = {dtl1_root}")
-    gates.append(f"FLIP = AND(DTL_0, DTL_2)")
-    gates.append(f"{target} = XOR(FLIP, {target}_enc)")
-    return gates
-
-def write_bench(output_path, key, inputs, keyinputs, outputs, logic):
-    with open(output_path, "w") as f:
+def write_bench(path, key, inputs, keyinputs, outputs, gates):
+    with open(path, "w") as f:
         f.write(f"#key={key}\n")
-        for i in inputs:
-            f.write(f"INPUT({i})\n")
+        for inp in inputs:
+            f.write(f"INPUT({inp})\n")
         for k in keyinputs:
             f.write(f"INPUT({k})\n")
-        for o in outputs:
-            f.write(f"OUTPUT({o})\n")
-        for line in logic:
-            f.write(f"{line}\n")
+        for out in outputs:
+            f.write(f"OUTPUT({out})\n")
+        for g in gates:
+            f.write(f"{g}\n")
 
-def apply_sarlock(bench_path, keysize):
-    inputs, outputs, logic = parse_bench(bench_path)
-    key = generate_key(keysize)
-    keyinputs = [f"keyinput{i}" for i in range(keysize)]
-    target_output = outputs[0]
+def reduce_and_tree(signals, prefix):
+    levels = []
+    current = signals
+    counter = 0
+    while len(current) > 1:
+        next_level = []
+        for i in range(0, len(current), 2):
+            if i + 1 < len(current):
+                gate = f"{prefix}_{counter}"
+                levels.append(f"{gate} = AND({current[i]}, {current[i+1]})")
+                next_level.append(gate)
+                counter += 1
+            else:
+                next_level.append(current[i])
+        current = next_level
+    root = f"{prefix}_root"
+    levels.append(f"{root} = {current[0]}")
+    return root, levels
 
-    updated_logic = []
-    for gate in logic:
-        if gate.startswith(f"{target_output} "):
-            rhs = gate.split("=")[1].strip()
-            updated_logic.append(f"{target_output}_enc = {rhs}")
+def build_sarlock_logic(inputs, keyinputs, key_bits, target):
+    xor_zero = f"XORZ = XOR({target}, {target})"
+    xnor_zero = f"XNORZ = XNOR({target}, {target})"
+    logic = [xor_zero, xnor_zero]
+
+    xnor_inputs_0 = []
+    xnor_inputs_2 = []
+
+    for i, key in enumerate(keyinputs):
+        pi = inputs[i % len(inputs)]
+        x0 = f"in{i}_xor0"
+        x2 = f"in{i}_xor2"
+        pattern = "XNORZ" if key_bits[i] == "1" else "XORZ"
+        logic.append(f"{x0} = XNOR({pi}, {key})")
+        logic.append(f"{x2} = XNOR({key}, {pattern})")
+        xnor_inputs_0.append(x0)
+        xnor_inputs_2.append(x2)
+
+    root0, tree0 = reduce_and_tree(xnor_inputs_0, "dtl0")
+    root2, tree2 = reduce_and_tree(xnor_inputs_2, "dtl2")
+
+    logic += tree0
+    logic += tree2
+    logic.append(f"DTL_0 = {root0}")
+    logic.append(f"DTL_2 = NAND({root2}, {root2})")
+    logic.append(f"FLIP = AND(DTL_0, DTL_2)")
+    logic.append(f"{target} = XOR(FLIP, {target}_enc)")
+    return logic
+
+def sarlock_lock(bench_path, keysize, output_dir):
+    inputs, outputs, gates = parse_bench(bench_path)
+    key, keyinputs, key_bits = generate_key(keysize)
+    target = outputs[0]
+
+    modified = []
+    for g in gates:
+        if g.startswith(target + " "):
+            rhs = g.split("=", 1)[1].strip()
+            modified.append(f"{target}_enc = {rhs}")
         else:
-            updated_logic.append(gate)
+            modified.append(g)
 
-    sarlock_logic = build_sarlock_logic(inputs, keyinputs, target_output, key)
-    all_logic = updated_logic + sarlock_logic
+    extra_logic = build_sarlock_logic(inputs, keyinputs, key_bits, target)
+    all_gates = modified + extra_logic
 
-    out_path = bench_path.replace(".bench", f"_SARLock_k_{keysize}.bench")
-    write_bench(out_path, key, inputs, keyinputs, outputs, all_logic)
-    print(f"SARLock locked file with key {key} is saved to: {out_path}")
+    outdir = Path(output_dir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    outfile = outdir / f"{Path(bench_path).stem}_SARLock_k_{keysize}.bench"
+    write_bench(outfile, key, inputs, keyinputs, outputs, all_gates)
+
+    print(f"SARLock locked file with key {key} is saved to: {outfile}")
+    
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--bench_path", required=True)
+    parser.add_argument("--bench_path", type=str, required=True)
     parser.add_argument("--keysize", type=int, required=True)
+    parser.add_argument("--output_dir", type=str, default="locked_circuits")
     args = parser.parse_args()
-    apply_sarlock(args.bench_path, args.keysize)
+
+    sarlock_lock(args.bench_path, args.keysize, args.output_dir)
 
 if __name__ == "__main__":
     main()
