@@ -15,6 +15,7 @@ from pathlib import Path
 #     write_list_to_file,
 # )
 
+
 def parse_bench(path):
     with open(path, 'r') as f:
         lines = f.readlines()
@@ -110,7 +111,7 @@ def write_bench(out_path, key, inputs, outputs, key_inputs, gates, added_logic):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="SARLock logic locking")
+    parser = argparse.ArgumentParser(description="SARLock logic locking (Atalanta-safe)")
     parser.add_argument("--bench_path", type=Path, required=True)
     parser.add_argument("--keysize", type=int, required=True)
     parser.add_argument("--output_path", type=Path, default=Path("locked_circuits"))
@@ -127,8 +128,7 @@ def main():
     out_file = args.output_path / f"{args.bench_path.stem}_SARLock_k_{args.keysize}.bench"
     write_bench(out_file, key, inputs, outputs, key_inputs, gates, logic)
 
-    print(f"File written: {out_file}")
-    print(f"Key: {key}")
+    print(f"File with Key={key} written: {out_file}")
 
 
 if __name__ == "__main__":
