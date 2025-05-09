@@ -9,10 +9,9 @@ import random
 # # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # from tools.utils.utils import parse_bench_file, write_list_to_file
-
 """
-Anti-SAT Locking Script (SLD-Compatible, Paper-Based)
-Implements Type-0 Anti-SAT: Y = g(X ⊕ Kl1) ∧ g(X ⊕ Kl2)
+Anti-SAT Locking Script (SLD-Compatible, Final Version)
+Type-0 logic: Y = g(X ⊕ Kl1) ∧ g(X ⊕ Kl2)
 LOCK_ENABLE = NOT(Y)
 Protected output: OUT = AND(LOCK_ENABLE, OUT_enc)
 """
@@ -30,7 +29,7 @@ def parse_bench(path):
             gates.append(line)
     return inputs, outputs, gates
 
-def generate_key(n):  # n = half key size → total key bits = 2n
+def generate_key(n):
     key = ''.join(random.choice("01") for _ in range(2 * n))
     key_decls = [f"INPUT(KEYINPUT{i})" for i in range(2 * n)]
     key_names = [f"KEYINPUT{i}" for i in range(2 * n)]
@@ -42,9 +41,9 @@ def get_target_output(outputs, gates):
     for name in output_names:
         if name in defined:
             return name
-    raise ValueError("[!] No output is logically assigned in the circuit.")
+    raise ValueError("[!] No logical assignment found for any output.")
 
-def build_and_tree(nodes, prefix):
+def build_and_tree(nodes, label):
     level = 0
     tree = []
     current = nodes[:]
@@ -53,7 +52,7 @@ def build_and_tree(nodes, prefix):
         for i in range(0, len(current), 2):
             if i + 1 < len(current):
                 a, b = current[i], current[i+1]
-                out = f"{prefix}_L{level}_{i//2}"
+                out = f"{label}_L{level}_{i//2}"
                 tree.append(f"{out} = AND({a}, {b})")
                 next_level.append(out)
             else:
@@ -92,19 +91,19 @@ def inject_antisat(inputs, key_wires, target_output, gates):
             updated_gates.append(line)
 
     if not found:
-        # fallback: try if target appears on RHS of any gate
+        # Try alias: G223GAT = n96
         for line in reversed(gates):
             lhs, rhs = line.split("=", 1)
-            if target_output in rhs:
-                last_signal = lhs.strip()
-                updated_gates.append(f"{target_enc} = {last_signal}")
+            if lhs.strip() == target_output:
+                signal = rhs.strip()
+                updated_gates.append(f"{target_enc} = {signal}")
                 found = True
                 break
 
     if not found:
-        # absolute fallback: assume last gate output drives target
-        last_lhs = gates[-1].split("=")[0].strip()
-        updated_gates.append(f"{target_enc} = {last_lhs}")
+        # Final fallback: use LHS of last line
+        last_defined = gates[-1].split("=")[0].strip()
+        updated_gates.append(f"{target_enc} = {last_defined}")
 
     updated_gates.append(f"{target_output} = AND(LOCK_ENABLE, {target_enc})")
     return updated_gates + logic
@@ -116,7 +115,7 @@ def write_bench(path, key, inputs, outputs, key_inputs, logic):
             f.write(f"{line}\n")
 
 def main():
-    parser = argparse.ArgumentParser(description="Anti-SAT Locking")
+    parser = argparse.ArgumentParser(description="Anti-SAT Locking (SLD-Compatible)")
     parser.add_argument("--bench_path", type=Path, required=True, help="Original .bench file")
     parser.add_argument("--keysize", type=int, required=True, help="Total key bits (2n)")
     parser.add_argument("--output_path", type=Path, default=Path("locked_circuits"), help="Output dir")
@@ -129,12 +128,10 @@ def main():
     locked_logic = inject_antisat(inputs, key_wires, target_output, gates)
 
     args.output_path.mkdir(parents=True, exist_ok=True)
-    out_path = args.output_path / f"{args.bench_path.stem}_AntiSATLock_k_{args.keysize}.bench"
-    write_bench(out_path, key, inputs, outputs, key_decls, locked_logic)
+    out_file = args.output_path / f"{args.bench_path.stem}_AntiSATLock_k_{args.keysize}.bench"
+    write_bench(out_file, key, inputs, outputs, key_decls, locked_logic)
 
-    print(f"Anti-SAT locked circuit with Key={key} is saved to: {out_path}")
+    print(f"Anti-SAT locked circuit with Key={key} is saved to: {out_file}")
 
 if __name__ == "__main__":
     main()
-
- 
