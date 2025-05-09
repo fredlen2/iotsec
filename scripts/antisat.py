@@ -3,56 +3,54 @@
 import argparse
 from pathlib import Path
 import random
-# import sys
-# import os
+import sys
+import os
 
 # # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 # sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # from tools.utils.utils import parse_bench_file, write_list_to_file
 """
-Anti-SAT Locking Script (SLD-Compatible, Final Version)
+Anti-SAT Locking Script
 Type-0 logic: Y = g(X ⊕ Kl1) ∧ g(X ⊕ Kl2)
 LOCK_ENABLE = NOT(Y)
 Protected output: OUT = AND(LOCK_ENABLE, OUT_enc)
 """
 
 def parse_bench(path):
-    with open(path, "r") as f:
+    with open(path) as f:
         lines = [line.strip() for line in f if line.strip()]
     inputs, outputs, gates = [], [], []
     for line in lines:
-        if line.startswith("INPUT("):
-            inputs.append(line)
-        elif line.startswith("OUTPUT("):
-            outputs.append(line)
-        elif "=" in line:
-            gates.append(line)
+        if line.startswith("INPUT("): inputs.append(line)
+        elif line.startswith("OUTPUT("): outputs.append(line)
+        elif "=" in line: gates.append(line)
     return inputs, outputs, gates
 
-def generate_key(n):
-    key = ''.join(random.choice("01") for _ in range(2 * n))
-    key_decls = [f"INPUT(KEYINPUT{i})" for i in range(2 * n)]
-    key_names = [f"KEYINPUT{i}" for i in range(2 * n)]
-    return key, key_decls, key_names
+def generate_embedded_key(n):
+    # Generate 2n bits for Kl1 and Kl2
+    full_key = ''.join(random.choice("01") for _ in range(2 * n))
+    Kl1 = full_key[:n]
+    Kl2 = full_key[n:]
+    return full_key, Kl1, Kl2
 
 def get_target_output(outputs, gates):
-    output_names = [line[7:-1] for line in outputs]
-    defined = {line.split("=")[0].strip() for line in gates}
-    for name in output_names:
+    names = [o[7:-1] for o in outputs]
+    defined = {g.split("=")[0].strip() for g in gates}
+    for name in names:
         if name in defined:
             return name
-    raise ValueError("[!] No logical assignment found for any output.")
+    raise ValueError("No assigned OUTPUT found.")
 
-def build_and_tree(nodes, label):
-    level = 0
+def build_and_tree(signals, prefix):
     tree = []
-    current = nodes[:]
+    level = 0
+    current = signals[:]
     while len(current) > 1:
         next_level = []
         for i in range(0, len(current), 2):
             if i + 1 < len(current):
                 a, b = current[i], current[i+1]
-                out = f"{label}_L{level}_{i//2}"
+                out = f"{prefix}_L{level}_{i//2}"
                 tree.append(f"{out} = AND({a}, {b})")
                 next_level.append(out)
             else:
@@ -61,15 +59,15 @@ def build_and_tree(nodes, label):
         level += 1
     return current[0], tree
 
-def inject_antisat(inputs, key_wires, target_output, gates):
-    n = len(key_wires) // 2
-    Kl1 = key_wires[:n]
-    Kl2 = key_wires[n:]
+def inject_antisat(inputs, target_output, gates, Kl1, Kl2):
+    n = len(Kl1)
     pi = [line[6:-1] for line in inputs]
     selected = pi[:n]
 
-    xor1 = [f"XOR1_{i} = XOR({selected[i]}, {Kl1[i]})" for i in range(n)]
-    xor2 = [f"XOR2_{i} = XOR({selected[i]}, {Kl2[i]})" for i in range(n)]
+    xor1, xor2 = [], []
+    for i in range(n):
+        xor1.append(f"XOR1_{i} = XOR({selected[i]}, {Kl1[i]})")
+        xor2.append(f"XOR2_{i} = XOR({selected[i]}, {Kl2[i]})")
 
     g1_root, g1_tree = build_and_tree([f"XOR1_{i}" for i in range(n)], "G1")
     g2_root, g2_tree = build_and_tree([f"XOR2_{i}" for i in range(n)], "G2")
@@ -78,6 +76,7 @@ def inject_antisat(inputs, key_wires, target_output, gates):
     logic.append(f"ANTISAT_AND = AND({g1_root}, {g2_root})")
     logic.append("LOCK_ENABLE = NOT(ANTISAT_AND)")
 
+    # Rewire target_output
     target_enc = f"{target_output}_enc"
     updated_gates = []
     found = False
@@ -91,45 +90,34 @@ def inject_antisat(inputs, key_wires, target_output, gates):
             updated_gates.append(line)
 
     if not found:
-        # Try alias: G223GAT = n96
-        for line in reversed(gates):
-            lhs, rhs = line.split("=", 1)
-            if lhs.strip() == target_output:
-                signal = rhs.strip()
-                updated_gates.append(f"{target_enc} = {signal}")
-                found = True
-                break
-
-    if not found:
-        # Final fallback: use LHS of last line
-        last_defined = gates[-1].split("=")[0].strip()
-        updated_gates.append(f"{target_enc} = {last_defined}")
+        last_lhs = gates[-1].split("=")[0].strip()
+        updated_gates.append(f"{target_enc} = {last_lhs}")
 
     updated_gates.append(f"{target_output} = AND(LOCK_ENABLE, {target_enc})")
     return updated_gates + logic
 
-def write_bench(path, key, inputs, outputs, key_inputs, logic):
+def write_bench(path, key, inputs, outputs, logic):
     with open(path, "w") as f:
         f.write(f"#key={key}\n")
-        for line in inputs + key_inputs + outputs + logic:
+        for line in inputs + outputs + logic:
             f.write(f"{line}\n")
 
 def main():
-    parser = argparse.ArgumentParser(description="Anti-SAT Locking (SLD-Compatible)")
+    parser = argparse.ArgumentParser(description="Anti-SAT Logic Locking")
     parser.add_argument("--bench_path", type=Path, required=True, help="Original .bench file")
     parser.add_argument("--keysize", type=int, required=True, help="Total key bits (2n)")
-    parser.add_argument("--output_path", type=Path, default=Path("locked_circuits"), help="Output dir")
+    parser.add_argument("--output_path", type=Path, default=Path("locked_circuits"), help="Output directory")
     args = parser.parse_args()
 
     inputs, outputs, gates = parse_bench(args.bench_path)
     n = args.keysize // 2
-    key, key_decls, key_wires = generate_key(n)
+    key, Kl1, Kl2 = generate_embedded_key(n)
     target_output = get_target_output(outputs, gates)
-    locked_logic = inject_antisat(inputs, key_wires, target_output, gates)
+    logic = inject_antisat(inputs, target_output, gates, Kl1, Kl2)
 
     args.output_path.mkdir(parents=True, exist_ok=True)
     out_file = args.output_path / f"{args.bench_path.stem}_AntiSATLock_k_{args.keysize}.bench"
-    write_bench(out_file, key, inputs, outputs, key_decls, locked_logic)
+    write_bench(out_file, key, inputs, outputs, logic)
 
     print(f"Anti-SAT locked circuit with Key={key} is saved to: {out_file}")
 
