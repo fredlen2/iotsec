@@ -33,27 +33,27 @@ source .venv/bin/activate
 
 ### install python requirements
 ``` \bin\bash
-pip install -r requirements.txt
+    pip install -r requirements.txt
 ```
 
 ## Assignment Task A Scripts Usage:
-
+This script scans the original bench directory (data) and creates a json file of the iterations and keysizes for each design
 ``` python3
-python3 scripts/gen_circuits_json.py
+    python3 scripts/gen_circuits_json.py
 ```
 
-``` python3
-python3 scripts/automate_sat_attack.py
-
-# OR
-
-python3 scripts/autoparallel_sat_attack.py
-
-# The second script proceeds to run python3 scripts/gen_pdf_report.py to convert the output csv to pdf.
-# Increase max_workers if the tasks are mostly waiting on external processes 
+The script proceeds to run python3 scripts/gen_pdf_report.py to convert the output csv to pdf.
+Increase max_workers if the tasks are mostly waiting on external processes 
 (scripts/autoparallel_sat_attack.py line 111). The tools/RLL.py script is not fully optimized.
+example:
     max_workers = 8
+
+``` python3
+    python3 scripts/autoparallel_sat_attack.py
+
+    python3 scripts/auto_sat_attack.py
 ```
+
 
 ## Assignment Task B Scripts - provably secure logic locking Usage:
 
@@ -72,15 +72,15 @@ Payload logic – The actual malicious modification in the circuit.
 Integration – The Trojan must affect the circuit output when activated.
 
 
-### output folder is `locked_circuits`
+### Trojan scripts output folder is `locked_circuits`
 ### Generate 50 trojan-infected files from one design
 ``` python3
     python3 scripts/insert_trojan.py --bench_path data/c432.bench
 ```
 
-### Generate 20 trojan files with 4-input triggers
+### Generate 50 trojan files with 4-input triggers from one design
 ``` python3
-    python3 scripts/insert_trojan.py --bench_path data/c432.bench --trigger_size 4 --num_trojans 20
+    python3 scripts/insert_trojan.py --bench_path data/c432.bench --trigger_size 4 --num_trojans 50
 ```
 
 ### Batch-infect all .bench files in a directory
@@ -88,13 +88,6 @@ Integration – The Trojan must affect the circuit output when activated.
     python3 scripts/insert_trojan.py --bench_path data/
 ```
 
-The two trojan scripts (have their outputs in trojan_injected directory):
-
-Selects random rare nodes as a trigger.
-Adds an AND-based trigger condition.
-Introduces an XOR-based payload to modify outputs.
-Generates 50 Trojan-infected files for each circuit.
-Runs Atalanta to check if the Trojan can be detected.
 
 
 
@@ -120,4 +113,12 @@ script to watch log files and CSV file being written to
 ```
 ``` \bin\bash
     tail -f results/sat_attack_parallel.log
+```
+
+### The pdf script can be run manually too
+```python3
+    python3 scripts/gen_pdf_report.py \
+    --input-csv results/sat_attack_parallel_results.csv \
+    --output-pdf results/sat_attack_summary.pdf \
+    --rows-per-page 25
 ```
