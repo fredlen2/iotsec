@@ -1,86 +1,81 @@
-import os
-import random
+#!/usr/bin/env python3
+
 import argparse
+import random
+from pathlib import Path
 
-# Default directories
-DATA_DIR = "data"
-TROJAN_DIR = "trojan_injected"
+def parse_bench(path):
+    with open(path, 'r') as f:
+        lines = [line.strip() for line in f if line.strip()]
+    inputs, outputs, logic = [], [], []
+    for line in lines:
+        if line.startswith("INPUT("):
+            inputs.append(line.split("(")[1].split(")")[0])
+        elif line.startswith("OUTPUT("):
+            outputs.append(line.split("(")[1].split(")")[0])
+        else:
+            logic.append(line)
+    return inputs, outputs, logic
 
-# Ensure output directory exists
-os.makedirs(TROJAN_DIR, exist_ok=True)
+def generate_trojan_logic(inputs, trigger_size, trojan_id):
+    selected = random.sample(inputs, trigger_size)
+    logic = []
+    inv_wires = []
+    for i, sig in enumerate(selected):
+        inv = f"trig_{trojan_id}_{i}_inv"
+        logic.append(f"{inv} = NOT({sig})")
+        inv_wires.append(inv)
 
-def parse_bench_file(file_path):
-    """Parse the .bench file into sections."""
-    with open(file_path, "r") as f:
-        lines = f.read().splitlines()
-    inputs = [line for line in lines if line.startswith("INPUT(")]
-    outputs = [line for line in lines if line.startswith("OUTPUT(")]
-    gates = [line for line in lines if "=" in line and not (line.startswith("INPUT(") or line.startswith("OUTPUT("))]
-    return inputs, outputs, gates
+    stage = 0
+    cur = inv_wires
+    while len(cur) > 1:
+        nxt = []
+        for i in range(0, len(cur), 2):
+            if i + 1 < len(cur):
+                out = f"trig_{trojan_id}_and_{stage}_{i//2}"
+                logic.append(f"{out} = AND({cur[i]}, {cur[i+1]})")
+                nxt.append(out)
+            else:
+                nxt.append(cur[i])
+        cur = nxt
+        stage += 1
+    trigger = cur[0]
+    payload = f"trojan_{trojan_id}_payload"
+    logic.append(f"{payload} = XOR({trigger}, G1GAT)")
+    return logic, payload
 
-def find_rare_nets(gates):
-    """Extract the LHS net name from each gate."""
-    return [gate.split("=")[0].strip() for gate in gates]
-
-def insert_trojan(inputs, outputs, gates, rare_nets, trigger_size, trojan_id):
-    """
-    Insert a Trojan with given trigger size and trojan_id into the circuit.
-    Assumes that `rare_nets` has been computed once per file.
-    """
-    new_gates = gates.copy()
-    # Randomly select trigger nets from the precomputed list
-    trigger_nets = random.sample(rare_nets, trigger_size)
-    trigger_name = f"trojan_trigger_{trojan_id}"
-    trigger_expr = ", ".join(trigger_nets)
-    new_gates.append(f"{trigger_name} = {'BUF' if trigger_size == 1 else 'AND'}({trigger_expr})")
-    
-    # Trojan payload: flip a random net
-    payload_target = random.choice(rare_nets)
-    payload_name = f"trojan_payload_{trojan_id}"
-    payload_gate = f"{payload_name} = XOR({trigger_name}, {payload_target})"
-    override_gate = f"{payload_target} = BUF({payload_name})"
-    
-    # Remove the original definition for payload_target and append payload logic
-    new_gates = [g for g in new_gates if not g.startswith(f"{payload_target} =")]
-    new_gates.extend([payload_gate, override_gate])
-    return new_gates
-
-def write_bench_file(file_path, inputs, outputs, gates):
-    """Write the circuit sections to a bench file in one shot."""
-    content = "\n".join(inputs + outputs + gates) + "\n"
-    with open(file_path, "w") as f:
-        f.write(content)
-
-def insert_trojans_in_file(file_name, trigger_size, num_trojans):
-    circuit_name = file_name.replace(".bench", "")
-    path = os.path.join(DATA_DIR, file_name)
-    inputs, outputs, gates = parse_bench_file(path)
-    rare_nets = find_rare_nets(gates)
-    
-    for i in range(num_trojans):
-        new_gates = insert_trojan(inputs, outputs, gates, rare_nets, trigger_size, i)
-        save_path = os.path.join(TROJAN_DIR, f"{circuit_name}_trojan_{i}.bench")
-        write_bench_file(save_path, inputs, outputs, new_gates)
-    
-    print(f"Inserted {num_trojans} trojans into {file_name}")
-
-def parse_args():
-    parser = argparse.ArgumentParser(description="Insert hardware Trojans into .bench files.")
-    parser.add_argument("--bench_path", type=str, help="Specific .bench file to process (in data/)")
-    parser.add_argument("--trigger_size", type=int, default=3, help="Number of trigger nets (default: 3)")
-    parser.add_argument("--num_trojans", type=int, default=50, help="Number of trojan-injected files to create (default: 50)")
-    return parser.parse_args()
+def insert_trojan(in_path, trigger_size, num_trojans, out_dir):
+    inputs, outputs, gates = parse_bench(in_path)
+    stem = in_path.stem
+    for t in range(1, num_trojans + 1):
+        trojan_logic, payload = generate_trojan_logic(inputs, trigger_size, t)
+        modified = gates + trojan_logic
+        out_lines = [f"INPUT({inp})" for inp in inputs]
+        out_lines += [f"OUTPUT({out})" for out in outputs]
+        out_lines += modified
+        out_file = out_dir / f"{stem}_HT_trigger_{trigger_size}_{t:02d}.bench"
+        with open(out_file, 'w') as f:
+            for line in out_lines:
+                f.write(f"{line}\n")
+        print(f"Generated: {out_file}")
 
 def main():
-    args = parse_args()
-    if args.bench_path:
-        bench_file = os.path.basename(args.bench_path)
-        insert_trojans_in_file(bench_file, args.trigger_size, args.num_trojans)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bench_path", type=Path, required=True)
+    parser.add_argument("--trigger_size", type=int, default=3)
+    parser.add_argument("--num_trojans", type=int, default=50)
+    args = parser.parse_args()
+
+    out_dir = Path("locked_circuits")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.bench_path.is_file() and args.bench_path.suffix == ".bench":
+        insert_trojan(args.bench_path, args.trigger_size, args.num_trojans, out_dir)
+    elif args.bench_path.is_dir():
+        for file in args.bench_path.glob("*.bench"):
+            insert_trojan(file, args.trigger_size, args.num_trojans, out_dir)
     else:
-        for file in os.listdir(DATA_DIR):
-            if file.endswith(".bench"):
-                insert_trojans_in_file(file, args.trigger_size, args.num_trojans)
-    print("All trojans inserted.")
+        print("Error: Invalid --bench_path. Provide a .bench file or directory.")
 
 if __name__ == "__main__":
     main()
