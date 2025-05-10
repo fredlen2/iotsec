@@ -1,103 +1,112 @@
 #!/usr/bin/env python3
-"""
-Lock a bench circuit with SARLock and insert a stealthy hardware Trojan,
-using random key generation and trigger selection.
-"""
-import argparse
+
+import argparse, random, os
 import logging
 import secrets
 import sys
 from pathlib import Path
 
 # Ensure the tools directory is on the import path
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tools.utils.utils import parse_bench_file, write_list_to_file
+# sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# from tools.utils.utils import parse_bench_file, write_list_to_file
 
-def sarlock_trojan_lock(inputs, outputs, base_gates, keysize, trojan_key_idxs):
-    """
-    Apply SARLock locking with Trojan insertion.
 
-    Args:
-        inputs (List[str]): original input signals.
-        outputs (List[str]): original output signals.
-        base_gates (List[str]): original gate definitions.
-        keysize (int): number of key bits.
-        trojan_key_idxs (List[int]): key bit indices for Trojan trigger.
-
-    Returns:
-        input_decls, output_decls, key_inputs, locked_gates
-    """
-    key_inputs = [f"keyinput{i}" for i in range(keysize)]
-    input_decls  = [f"INPUT({sig})" for sig in inputs + key_inputs]
-    output_decls = [f"OUTPUT({sig})" for sig in outputs]
-
-    # Rename protected output
-    protected = outputs[0]
-    locked_gates = []
-    for gate in base_gates:
-        if gate.startswith(f"{protected} ") or gate.startswith(f"{protected}="):
-            locked_gates.append(f"{protected}_orig = {protected}")
+def parse_bench(path):
+    with open(path) as f:
+        lines = [line.strip() for line in f if line.strip()]
+    inputs, outputs, gates = [], [], []
+    for line in lines:
+        if line.startswith("INPUT("):
+            inputs.append(line[6:-1])
+        elif line.startswith("OUTPUT("):
+            outputs.append(line[7:-1])
         else:
-            locked_gates.append(gate)
+            gates.append(line)
+    return inputs, outputs, gates
 
-    # SARLock comparator & locked output
-    locked_gates.append(f"cmp = XOR({inputs[0]}, {key_inputs[0]})")
-    locked_gates.append(f"{protected} = AND({protected}_orig, NOT(cmp))")
+def generate_key(keysize):
+    key = ''.join(random.choice("01") for _ in range(keysize))
+    key_inputs = [f"keyinput{i}" for i in range(keysize)]
+    key_decls = [f"INPUT({k})" for k in key_inputs]
+    return key, key_inputs, key_decls
 
-    # Trojan insertion
-    trigger_terms = ["cmp"] + [key_inputs[i] for i in trojan_key_idxs if i < keysize]
-    locked_gates.append(f"trojan_trigger = AND({', '.join(trigger_terms)})")
-    locked_gates.append(f"{protected} = XOR({protected}, trojan_trigger)")
+def build_tree(wires, prefix, gate="AND"):
+    logic = []
+    count = 0
+    while len(wires) > 1:
+        new = []
+        for i in range(0, len(wires), 2):
+            if i + 1 < len(wires):
+                a, b = wires[i], wires[i+1]
+                w = f"{prefix}_{count}_{i//2}"
+                logic.append(f"{w} = {gate}({a}, {b})")
+                new.append(w)
+            else:
+                new.append(wires[i])
+        wires = new
+        count += 1
+    return wires[0], logic
 
-    return input_decls, output_decls, key_inputs, locked_gates
+def sarlock_troll_logic(inputs, key_inputs, key_bits, target):
+    logic = []
+    # Define constants stealthily
+    logic += [
+        "zero_not = NOT(G1GAT)",
+        "zero = AND(G1GAT, zero_not)",
+        "one_not = NOT(G1GAT)",
+        "one = NAND(G1GAT, one_not)"
+    ]
+
+    match_xnors = []
+    for i, k in enumerate(key_bits):
+        pi = inputs[i % len(inputs)]
+        ki = key_inputs[i]
+        mid = f"match_{i}"
+        const = "one" if k == "1" else "zero"
+        logic.append(f"{mid} = XNOR({pi}, {ki})")
+        match_xnors.append(mid)
+
+    and_root, and_logic = build_tree(match_xnors, "match_and")
+    logic += and_logic
+    logic.append(f"trojan_flip = BUF({and_root})")
+    logic.append(f"{target} = XOR({target}_enc, trojan_flip)")
+
+    return logic
+
+def replace_target(gates, target):
+    new = []
+    for g in gates:
+        if g.startswith(f"{target} "):
+            new.append(f"{target}_enc = {g.split('=')[1].strip()}")
+        else:
+            new.append(g)
+    return new
+
+def write_file(path, key, inputs, key_inputs, outputs, logic):
+    with open(path, 'w') as f:
+        f.write(f"#key={key}\n")
+        for i in inputs: f.write(f"INPUT({i})\n")
+        for k in key_inputs: f.write(f"INPUT({k})\n")
+        for o in outputs: f.write(f"OUTPUT({o})\n")
+        for line in logic: f.write(f"{line}\n")
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Insert SARLock locking and Trojan into a bench file with random key."
-    )
-    parser.add_argument("--bench_path", "-b", type=Path, help="Original .bench file path.")
-    parser.add_argument("--keysize",  "-k", type=int, required=True, help="Number of key bits.")
-    parser.add_argument("--trojan-key-idxs", "-t", type=int, nargs='+',
-                        help="Key bit indices for Trojan trigger (random if omitted).")
-    parser.add_argument("--output-dir", "-o", type=Path,
-                        default=Path("locked_circuits"), help="Output directory.")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bench_path", type=Path, required=True)
+    parser.add_argument("--keysize", type=int, required=True)
+    parser.add_argument("--output_path", type=Path, default=Path("locked_circuits"))
     args = parser.parse_args()
 
-    logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.INFO)
+    inputs, outputs, gates = parse_bench(args.bench_path)
+    target = outputs[0]
+    key, key_inputs, _ = generate_key(args.keysize)
+    replaced = replace_target(gates, target)
+    logic = replaced + sarlock_troll_logic(inputs, key_inputs, key, target)
 
-    # Parse original bench
-    inputs, outputs, base_gates, _ = parse_bench_file(str(args.bench_path))
-
-    # Generate secure random key
-    keysize = args.keysize
-    key_str  = ''.join(secrets.choice('01') for _ in range(keysize))
-    key_bits = [int(b) for b in key_str]
-
-    # Determine Trojan trigger bits
-    trojan_key_idxs = (
-        args.trojan_key_idxs
-        if args.trojan_key_idxs
-        else secrets.SystemRandom().sample(range(keysize), min(3, keysize))
-    )
-
-    # Apply locking
-    input_decls, output_decls, key_inputs, locked_gates = sarlock_trojan_lock(
-        inputs, outputs, base_gates, keysize, trojan_key_idxs
-    )
-
-    # Write locked bench + key vector
-    all_lines = input_decls + output_decls + locked_gates
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = args.output_dir / f"{args.bench_path.stem}_SARLock_Trojan_k_{keysize}.bench"
-    write_list_to_file(all_lines, str(out_path), key_bits)
-
-    # Annotate with key and triggers
-    lines = out_path.read_text().splitlines(keepends=True)
-    lines.insert(0, f"# trojan_key_idxs={trojan_key_idxs}\n")
-    lines.insert(0, f"# key={key_str}\n")
-    out_path.write_text(''.join(lines))
-
-    logging.info(f"Generated {out_path} with cryptographic key and Trojan triggers.")
+    args.output_path.mkdir(exist_ok=True)
+    out_file = args.output_path / f"{args.bench_path.stem}_TroLL_SARLock_k_{args.keysize}.bench"
+    write_file(out_file, key, inputs, key_inputs, outputs, logic)
+    print(f"TroLL-SARLock written: {out_file}")
 
 if __name__ == "__main__":
     main()

@@ -72,7 +72,7 @@ Payload logic – The actual malicious modification in the circuit.
 Integration – The Trojan must affect the circuit output when activated.
 
 
-### output folder is `trojan_injected`
+### output folder is `locked_circuits`
 ### Generate 50 trojan-infected files from one design
 ``` python3
     python3 scripts/insert_trojan.py --bench_path data/c432.bench
@@ -99,18 +99,11 @@ Runs Atalanta to check if the Trojan can be detected.
 
 
 # Assignment 2 - Stealthy Trojans
-Run with single command
-``` \bin\bash
-    python3 scripts/all_trojan_locking.py -b data/c432.bench -k=16
-```
-OR
-
-Run them separately
 
 ``` \bin\bash
-    python3 scripts/antisat_trojan.py  -b data/c432.bench -k 16
-    python3 scripts/corrupt_and_correct_trojan.py -b data/c432.bench -k 16
-    python3 scripts/sarlock_trojan.py -b data/c432.bench -k 16
+    python3 scripts/antisat_trojan.py  --bench_path data/c432.bench --keysize 16
+    python3 scripts/cac_trojan.py --bench_path data/c432.bench --keysize 16
+    python3 scripts/sarlock_trojan.py --bench_path data/c432.bench --keysize 16
 
 ```
 

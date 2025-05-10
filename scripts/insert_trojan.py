@@ -8,17 +8,30 @@ def parse_bench(path):
     with open(path, 'r') as f:
         lines = [line.strip() for line in f if line.strip()]
     inputs, outputs, logic = [], [], []
+    declared_wires = set()
+    used_wires = set()
+
     for line in lines:
         if line.startswith("INPUT("):
-            inputs.append(line.split("(")[1].split(")")[0])
+            sig = line.split("(")[1].split(")")[0]
+            inputs.append(sig)
+            declared_wires.add(sig)
         elif line.startswith("OUTPUT("):
-            outputs.append(line.split("(")[1].split(")")[0])
+            sig = line.split("(")[1].split(")")[0]
+            outputs.append(sig)
         else:
             logic.append(line)
-    return inputs, outputs, logic
+            lhs, rhs = line.split("=")
+            lhs = lhs.strip()
+            declared_wires.add(lhs)
+            for token in rhs.strip().replace("(", " ").replace(")", " ").replace(",", " ").split():
+                if token not in {"AND", "OR", "NOT", "NAND", "NOR", "XOR", "XNOR"}:
+                    used_wires.add(token)
+    floating_inputs = [sig for sig in declared_wires if sig not in used_wires and sig not in outputs]
+    return inputs, outputs, logic, floating_inputs
 
-def generate_trojan_logic(inputs, trigger_size, trojan_id):
-    selected = random.sample(inputs, trigger_size)
+def generate_trojan_logic(valid_inputs, trigger_size, trojan_id):
+    selected = random.sample(valid_inputs, trigger_size)
     logic = []
     inv_wires = []
     for i, sig in enumerate(selected):
@@ -41,7 +54,7 @@ def generate_trojan_logic(inputs, trigger_size, trojan_id):
         stage += 1
     trigger = cur[0]
     payload = f"trojan_{trojan_id}_payload"
-    logic.append(f"{payload} = XOR({trigger}, G1GAT)")
+    logic.append(f"{payload} = XOR({trigger}, {selected[0]})")
     return logic, payload
 
 def modify_output_target(logic, target_output, payload):
@@ -60,18 +73,24 @@ def modify_output_target(logic, target_output, payload):
     return new_logic
 
 def insert_trojan(in_path, trigger_size, num_trojans, out_dir):
-    inputs, outputs, logic = parse_bench(in_path)
+    inputs, outputs, logic, floating_nets = parse_bench(in_path)
+    valid_inputs = [i for i in inputs if i not in floating_nets]
+    if len(valid_inputs) < trigger_size:
+        print(f"Error: Not enough valid inputs to insert Trojan in {in_path.name}")
+        return
+
     stem = in_path.stem
-    primary_target = outputs[0]
+    target = outputs[0]
 
     for t in range(1, num_trojans + 1):
-        trojan_logic, payload = generate_trojan_logic(inputs, trigger_size, t)
-        logic_mod = modify_output_target(logic, primary_target, payload)
-        full_logic = logic_mod + trojan_logic
+        trojan_logic, payload = generate_trojan_logic(valid_inputs, trigger_size, t)
+        modified_logic = modify_output_target(logic, target, payload)
+        full_logic = modified_logic + trojan_logic
 
-        out_lines = ["#"]  # Fix for Atalanta: comment first line
+        out_lines = ["#"]  # Atalanta-compatible
         out_lines += [f"INPUT({inp})" for inp in inputs]
         out_lines += [f"OUTPUT({out})" for out in outputs]
+        out_lines += [f"OUTPUT({payload})"]  # Make payload not floating
         out_lines += full_logic
 
         out_file = out_dir / f"{stem}_HT_trigger_{trigger_size}_{t:02d}.bench"
