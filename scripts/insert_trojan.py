@@ -44,15 +44,36 @@ def generate_trojan_logic(inputs, trigger_size, trojan_id):
     logic.append(f"{payload} = XOR({trigger}, G1GAT)")
     return logic, payload
 
+def modify_output_target(logic, target_output, payload):
+    new_logic = []
+    replaced = False
+    for line in logic:
+        if line.startswith(f"{target_output} "):
+            expr = line.split("=", 1)[1].strip()
+            new_logic.append(f"{target_output}_enc = {expr}")
+            new_logic.append(f"{target_output} = XOR({target_output}_enc, {payload})")
+            replaced = True
+        else:
+            new_logic.append(line)
+    if not replaced:
+        print(f"Warning: {target_output} not found in logic.")
+    return new_logic
+
 def insert_trojan(in_path, trigger_size, num_trojans, out_dir):
-    inputs, outputs, gates = parse_bench(in_path)
+    inputs, outputs, logic = parse_bench(in_path)
     stem = in_path.stem
+    primary_target = outputs[0]
+
     for t in range(1, num_trojans + 1):
         trojan_logic, payload = generate_trojan_logic(inputs, trigger_size, t)
-        modified = gates + trojan_logic
-        out_lines = [f"INPUT({inp})" for inp in inputs]
+        logic_mod = modify_output_target(logic, primary_target, payload)
+        full_logic = logic_mod + trojan_logic
+
+        out_lines = ["#"]  # Fix for Atalanta: comment first line
+        out_lines += [f"INPUT({inp})" for inp in inputs]
         out_lines += [f"OUTPUT({out})" for out in outputs]
-        out_lines += modified
+        out_lines += full_logic
+
         out_file = out_dir / f"{stem}_HT_trigger_{trigger_size}_{t:02d}.bench"
         with open(out_file, 'w') as f:
             for line in out_lines:
