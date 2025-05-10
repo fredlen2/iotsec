@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
+import os
 import json
 import logging
 import subprocess
 import time
 import csv
-import os
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
+from typing import List, Tuple, Dict, Any
 
 # —— CONFIGURATION —— #
 ROOT         = Path.cwd()
@@ -44,7 +45,7 @@ if not CONFIG_PATH.exists():
     logging.info("Generated config file at %s", CONFIG_PATH)
 
 # —— LOAD CONFIG —— #
-config = json.loads(CONFIG_PATH.read_text())
+config: Dict[str, Any] = json.loads(CONFIG_PATH.read_text())
 circuits, iterations = config["circuits"], config["iterations"]
 
 # —— INITIALIZE RESULTS CSV —— #
@@ -57,25 +58,28 @@ if not RESULTS_CSV.exists():
         ])
 
 # —— HELPERS —— #
-def run(cmd: list) -> tuple[str, float]:
+def run(cmd: List[str]) -> Tuple[str, float]:
+    """
+    Run an external command and return (stdout+stderr, elapsed_seconds).
+    """
     start = time.time()
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
         out = proc.stdout
     except subprocess.CalledProcessError as e:
         out = (e.stdout or "") + (e.stderr or "")
-        logging.error("Failed %s → %s", cmd, out)
+        logging.error("Command failed %s → %s", cmd, out)
     return out, round(time.time() - start, 3)
 
 def generate_key(size: int) -> str:
-    # repeat "10" pairs (or add an extra "1" for odd sizes)
+    """Generate a key string like '1010...' of length `size`."""
     return "10" * (size // 2) + ("1" if size % 2 else "")
 
-def process(c: dict, key_size: int, iteration: int) -> list:
-    name      = c["name"]
-    bench     = DATA_DIR / c["file"]
-    key       = generate_key(key_size)
-    locked    = LOCKED_DIR / f"{name}_RLL_K{key_size}_{iteration}.bench"
+def process(circuit: Dict[str, Any], key_size: int, iteration: int) -> List[Any]:
+    name   = circuit["name"]
+    bench  = DATA_DIR / circuit["file"]
+    key    = generate_key(key_size)
+    locked = LOCKED_DIR / f"{name}_RLL_K{key_size}_{iteration}.bench"
 
     # 1) Lock the circuit
     run([
@@ -104,7 +108,7 @@ def process(c: dict, key_size: int, iteration: int) -> list:
             except ValueError:
                 pass
 
-    # 4) Validate key if recovered
+    # 4) Validate recovered key
     key_correct = "N/A"
     if recovered:
         lcmp_out, _ = run([
@@ -128,13 +132,13 @@ def process(c: dict, key_size: int, iteration: int) -> list:
 def main():
     # build task list
     tasks = [
-        (circuit, ks, i)
-        for circuit in circuits
-        for ks in circuit["key_sizes"]
+        (c, ks, i)
+        for c in circuits
+        for ks in c["key_sizes"]
         for i  in range(iterations)
     ]
 
-    results = []
+    results: List[List[Any]] = []
     max_workers = min(32, (os.cpu_count() or 1) * 2, len(tasks))
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
@@ -146,8 +150,9 @@ def main():
                            desc="Running tasks"):
             try:
                 results.append(future.result())
-            except Exception as e:
-                logging.exception("Task %s failed", futures[future])
+            except Exception:
+                name, ks, it = futures[future]
+                logging.exception("Task %s K=%d iter=%d failed", name, ks, it)
 
     # batch‐write CSV
     with RESULTS_CSV.open("a", newline="") as csvfile:

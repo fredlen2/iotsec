@@ -6,6 +6,7 @@ You can skip the ones that do not apply:
 https://github.com/fredlen2/iotsec.git
 ```
 
+## SETUP INSTRUCTIONS
 Ensure all directories and files exist. I have added some extra steps in most of the scripts to ensure it creates the required directories automatically. But if the script fails, run these then try again:
 
 ``` \bin\bash
@@ -36,6 +37,9 @@ source .venv/bin/activate
     pip install -r requirements.txt
 ```
 
+# ABOVE STEPS ARE NECESSARY ESPECIALLY THE .venv FOR ASSIGNMENT 1 TASK A
+
+# ASSIGNMENT 1
 ## Assignment Task A Scripts Usage:
 This script scans the original bench directory (data) and creates a json file of the iterations and keysizes for each design
 ``` python3
@@ -44,13 +48,17 @@ This script scans the original bench directory (data) and creates a json file of
 
 The script proceeds to run python3 scripts/gen_pdf_report.py to convert the output csv to pdf.
 Increase max_workers if the tasks are mostly waiting on external processes 
-(scripts/autoparallel_sat_attack.py line 111). The tools/RLL.py script is not fully optimized.
+(scripts/autoparallel_sat_attack.py line 111). 
+The tools/RLL.py script is not fully optimized making this script slow.
 example:
     max_workers = 8
 
 ``` python3
     python3 scripts/autoparallel_sat_attack.py
+```
 
+This is an alternative script (Not tested because server was throwing some errors)
+```
     python3 scripts/auto_sat_attack.py
 ```
 
@@ -90,7 +98,7 @@ Integration – The Trojan must affect the circuit output when activated.
 
 
 
-
+# ASSIGNMENT 2
 # Assignment 2 - Stealthy Trojans
 
 ``` \bin\bash
