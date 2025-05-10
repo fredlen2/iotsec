@@ -37,7 +37,7 @@ source .venv/bin/activate
     pip install -r requirements.txt
 ```
 
-# ABOVE STEPS ARE NECESSARY ESPECIALLY THE .venv FOR ASSIGNMENT 1 TASK A
+## ABOVE STEPS ARE NECESSARY ESPECIALLY THE .venv FOR ASSIGNMENT 1
 
 # ASSIGNMENT 1
 ## Assignment Task A Scripts Usage:
@@ -49,10 +49,11 @@ This script scans the original bench directory (data) and creates a json file of
 The script proceeds to run python3 scripts/gen_pdf_report.py to convert the output csv to pdf.
 Increase max_workers if the tasks are mostly waiting on external processes 
 (scripts/autoparallel_sat_attack.py line 111). 
-The tools/RLL.py script is not fully optimized making this script slow.
 example:
     max_workers = 8
+The tools/RLL.py script is not fully optimized making this script slow.
 
+Task A deliverable:
 ``` python3
     python3 scripts/autoparallel_sat_attack.py
 ```
@@ -64,7 +65,7 @@ This is an alternative script (Not tested because server was throwing some error
 
 
 ## Assignment Task B Scripts - provably secure logic locking Usage:
-
+Task B deliverable:
 ``` python3
 python3 scripts/sarlock.py data/c432.bench --keysize 16
 python3 scripts/antisat.py data/c432.bench --keysize 16
@@ -79,7 +80,7 @@ Trigger logic – A set of rare nodes (inputs) that activate the Trojan.
 Payload logic – The actual malicious modification in the circuit.
 Integration – The Trojan must affect the circuit output when activated.
 
-
+Task C deliverable:
 ### Trojan scripts output folder is `locked_circuits`
 ### Generate 50 trojan-infected files from one design
 ``` python3
@@ -99,8 +100,8 @@ Integration – The Trojan must affect the circuit output when activated.
 
 
 # ASSIGNMENT 2
-# Assignment 2 - Stealthy Trojans
-
+## Stealthy Trojans
+Assignment 2 deliverable:
 ``` \bin\bash
     python3 scripts/antisat_trojan.py  --bench_path data/c432.bench --keysize 16
     python3 scripts/cac_trojan.py --bench_path data/c432.bench --keysize 16
