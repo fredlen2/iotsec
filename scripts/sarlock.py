@@ -15,138 +15,97 @@ import sys
 #     write_list_to_file,
 # )
 
-"""
-SARLock Logic Locking Script
-Injects comparator + mask logic to protect one output via SARLock technique.
-"""
-
-
-def parse_bench_file(bench_path: Path):
-    """Parse inputs, outputs, and gates from an ISCAS-85 .bench file."""
+def parse_bench(path):
     inputs, outputs, gates = [], [], []
-    with bench_path.open('r') as f:
+    with open(path, 'r') as f:
         for line in f:
             line = line.strip()
             if line.startswith("INPUT("):
-                inputs.append(line[len("INPUT("):-1])
+                inputs.append(line.split("(")[1].split(")")[0])
             elif line.startswith("OUTPUT("):
-                outputs.append(line[len("OUTPUT("):-1])
-            elif '=' in line:
+                outputs.append(line.split("(")[1].split(")")[0])
+            elif "=" in line:
                 gates.append(line)
     return inputs, outputs, gates
 
+def generate_key(keysize):
+    key = ''.join(random.choice("01") for _ in range(keysize))
+    keyinputs = [f"keyinput{i}" for i in range(keysize)]
+    return key, keyinputs
 
-def generate_random_key(keysize: int):
-    """Generate a binary key string and corresponding key-input names."""
-    bits = ''.join(random.choice('01') for _ in range(keysize))
-    nets = [f"keyinput{i}" for i in range(keysize)]
-    return bits, nets
-
-
-def build_and_tree(nodes, prefix):
-    """Construct a balanced AND-tree over a list of node names."""
-    gates = []
-    level = 0
-    current = list(nodes)
-    while len(current) > 1:
-        next_level = []
-        for i in range(0, len(current), 2):
-            if i + 1 < len(current):
-                out = f"{prefix}_L{level}_{i//2}"
-                gates.append(f"{out} = AND({current[i]}, {current[i+1]})")
-                next_level.append(out)
-            else:
-                next_level.append(current[i])
-        current = next_level
-        level += 1
-    return current[0], gates
-
-
-def create_sarlock_logic(inputs, key_nets, key_str, target):
-    """Generate SARLock comparator & mask logic (XOR+NOT for XNOR)."""
-    logic = []
-    # constant source
-    const_inv = f"{target}_const_inv"
-    logic.append(f"{const_inv} = NOT({inputs[0]})")
-    zero = f"{target}_zero"
-    one = f"{target}_one"
-    logic.append(f"{zero} = AND({inputs[0]}, {const_inv})")
-    logic.append(f"{one}  = OR({inputs[0]}, {const_inv})")
-
-    match_nets, mask_nets = [], []
-    for i, bit in enumerate(key_str):
-        xi = inputs[i % len(inputs)]
-        ki = key_nets[i]
-        # XNOR(xi, ki)
-        tmp = f"tmp_xm{i}"
-        m = f"m_xnor{i}"
-        logic.append(f"{tmp} = XOR({xi}, {ki})")
-        logic.append(f"{m} = NOT({tmp})")
-        match_nets.append(m)
-        # XNOR(ki, const)
-        choice = one if bit == '1' else zero
-        tmp2 = f"tmp_xs{i}"
-        s = f"s_xnor{i}"
-        logic.append(f"{tmp2} = XOR({ki}, {choice})")
-        logic.append(f"{s} = NOT({tmp2})")
-        mask_nets.append(s)
-
-    # AND-trees
-    root1, t1 = build_and_tree(match_nets, "match")
-    root2, t2 = build_and_tree(mask_nets,  "mask")
-    logic += t1 + t2
-    logic.append(f"DTL_0 = {root1}")
-    logic.append(f"DTL_2 = {root2}")
-    logic.append("FLIP = AND(DTL_0, DTL_2)")
-    # obfuscate
-    logic.append(f"{target} = XOR(FLIP, {target}_enc)")
-    return logic
-
-
-def sarlock_lock(bench_path: Path, keysize: int, output_path: Path):
-    inputs, outputs, gates = parse_bench_file(bench_path)
-    key_str, key_nets = generate_random_key(keysize)
+def sarlock_insert(bench_path, output_path, keysize):
+    inputs, outputs, gates = parse_bench(bench_path)
+    key, keyinputs = generate_key(keysize)
     target = outputs[0]
 
-    # prepare header
-    header = [f"#key={key_str}"]
-    header += [f"INPUT({i})" for i in inputs]
-    header += [f"INPUT({k})" for k in key_nets]
-    header += [f"OUTPUT({o})" for o in outputs]
+    logic = [f"#key={key}"]
+    
+    # Declare all INPUTs
+    logic += [f"INPUT({inp})" for inp in inputs + keyinputs]
+    # Declare OUTPUTs
+    logic += [f"OUTPUT({out})" for out in outputs]
 
-    # rename original gate
-    import re
-    pat = re.compile(rf"^\s*{target}\s*=")
-    renamed = []
-    for g in gates:
-        if pat.match(g):
-            rhs = g.split('=',1)[1].strip()
-            renamed.append(f"{target}_enc = {rhs}")
+    and_inputs_0, and_inputs_2 = [], []
+    for i in range(keysize):
+        pi = inputs[i % len(inputs)]
+        ki = keyinputs[i]
+        x0 = f"in{i}_xor0"
+        x2 = f"in{i}_xor2"
+        gates.append(f"{x0} = XNOR({pi}, {ki})")
+        gates.append(f"{x2} = XNOR({ki}, {'logic0' if key[i] == '0' else 'logic1'})")
+        and_inputs_0.append(x0)
+        and_inputs_2.append(x2)
+
+    gates.append(f"logic0 = XNOR({inputs[0]}, {inputs[0]})")
+    gates.append(f"logic1 = XOR({inputs[0]}, {inputs[0]})")
+
+    def build_and_tree(signals, label):
+        level = 0
+        nodes = signals[:]
+        while len(nodes) > 1:
+            next_nodes = []
+            for i in range(0, len(nodes), 2):
+                if i + 1 < len(nodes):
+                    node = f"{label}_L{level}_{i//2}"
+                    gates.append(f"{node} = AND({nodes[i]}, {nodes[i+1]})")
+                    next_nodes.append(node)
+                else:
+                    next_nodes.append(nodes[i])
+            nodes = next_nodes
+            level += 1
+        return nodes[0]
+
+    dtl0 = build_and_tree(and_inputs_0, "match_and")
+    dtl2 = build_and_tree(and_inputs_2, "mismatch_and")
+
+    gates.append(f"DTL_0 = {dtl0}")
+    gates.append(f"DTL_2 = {dtl2}")
+    gates.append(f"FLIP = AND(DTL_0, DTL_2)")
+
+    # Replace target assignment
+    modified_gates = []
+    for gate in gates:
+        if gate.startswith(f"{target} ="):
+            modified_gates.append(gate.replace(target, f"{target}_enc"))
         else:
-            renamed.append(g)
+            modified_gates.append(gate)
+    modified_gates.append(f"{target} = XOR(FLIP, {target}_enc)")
 
-    # inject SARLock logic
-    sar_logic = create_sarlock_logic(inputs, key_nets, key_str, target)
-
-    # write output
+    out_file = output_path / f"{Path(bench_path).stem}_SARLock_k_{keysize}.bench"
     output_path.mkdir(parents=True, exist_ok=True)
-    out_file = output_path / f"{bench_path.stem}_SARLock_k_{keysize}.bench"
-    with out_file.open('w') as f:
-        for line in header + renamed + sar_logic:
-            f.write(line + '\n')
+    with open(out_file, 'w') as f:
+        for line in logic + modified_gates:
+            f.write(f"{line}\n")
 
-    print(f"SARLock locked circuit with Key[🔐] = {key_str} is saved to: {out_file}")
-
+    print(f"SARLock locked circuit with Key[\U0001f510] = {key} is saved to: {out_file}")
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bench_path", type=Path, required=True)
-    parser.add_argument("--keysize", type=int, required=True)  # 2n
+    parser.add_argument("--keysize", type=int, required=True)
     parser.add_argument("--output_path", type=Path, default=Path("locked_circuits"))
     args = parser.parse_args()
-
-    sarlock_lock(args.bench_path, args.keysize, args.output_path)
-
+    sarlock_insert(args.bench_path, args.output_path, args.keysize)
 
 if __name__ == "__main__":
     main()
