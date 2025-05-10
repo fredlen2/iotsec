@@ -10,78 +10,87 @@ import os
 # sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # from tools.utils.utils import parse_bench_file, write_list_to_file
 
-def parse_bench(input_file):
-    inputs, outputs, logic = [], [], []
-    with open(input_file, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if line.startswith("INPUT("):
-                inputs.append(line[6:-1])
-            elif line.startswith("OUTPUT("):
-                outputs.append(line[7:-1])
-            elif "=" in line:
-                logic.append(line)
-    return inputs, outputs, logic
+def parse_bench(path):
+    with open(path, 'r') as f:
+        lines = [line.strip() for line in f if line.strip()]
+    inputs, outputs, gates = [], [], []
+    for line in lines:
+        if line.startswith("INPUT("):
+            inputs.append(line.split("(")[1].split(")")[0])
+        elif line.startswith("OUTPUT("):
+            outputs.append(line.split("(")[1].split(")")[0])
+        else:
+            gates.append(line)
+    return inputs, outputs, gates
 
 def generate_key(keysize):
-    key_bits = ''.join(random.choice("01") for _ in range(keysize))
+    key = ''.join(random.choice("01") for _ in range(keysize))
     key_inputs = [f"keyinput{i}" for i in range(keysize)]
-    return key_bits, key_inputs
+    key_decls = [f"INPUT({k})" for k in key_inputs]
+    return key, key_inputs, key_decls
 
-def build_and_tree(inputs, label):
-    tree = []
-    level = 0
-    current = inputs
-    while len(current) > 1:
-        next_level = []
-        for i in range(0, len(current), 2):
-            a = current[i]
-            b = current[i+1] if i+1 < len(current) else current[i]
-            out = f"{label}_L{level}_{i//2}"
-            tree.append(f"{out} = AND({a}, {b})")
-            next_level.append(out)
-        current = next_level
-        level += 1
-    return current[0], tree
+def antisat_logic(inputs, keyinputs, key_bits, target_output):
+    assert len(keyinputs) % 2 == 0
+    n = len(keyinputs) // 2
+    logic = []
 
-def inject_antisat(inputs, outputs, gates, key_inputs):
-    n = len(key_inputs) // 2
-    Kl1 = key_inputs[:n]
-    Kl2 = key_inputs[n:]
-    selected = inputs[:n]
+    g_terms = []
+    gbar_terms = []
 
-    xor1 = [f"X1_{i} = XNOR({selected[i]}, {Kl1[i]})" for i in range(n)]
-    xor2 = [f"X2_{i} = XNOR({selected[i]}, {Kl2[i]})" for i in range(n)]
+    for i in range(n):
+        pi = inputs[i % len(inputs)]
+        k1 = keyinputs[i]
+        k2 = keyinputs[i + n]
 
-    g1_root, g1_tree = build_and_tree([f"X1_{i}" for i in range(n)], "G1")
-    g2_root, g2_tree = build_and_tree([f"X2_{i}" for i in range(n)], "G2")
+        xor1 = f"g_xor1_{i}"
+        xor2 = f"g_xor2_{i}"
 
-    antisat_logic = xor1 + xor2 + g1_tree + g2_tree
-    antisat_logic.append(f"ANTISAT_AND = AND({g1_root}, {g2_root})")
-    antisat_logic.append("LOCK_ENABLE = NOT(ANTISAT_AND)")
+        logic.append(f"{xor1} = XOR({pi}, {k1})")
+        logic.append(f"{xor2} = XOR({pi}, {k2})")
 
-    target = outputs[0]
-    enc_target = f"{target}_enc"
-    final_logic = []
-    replaced = False
+        g_terms.append(xor1)
+        gbar_terms.append(xor2)
 
+    def build_and_chain(terms, out_name, gate_type):
+        if len(terms) == 1:
+            return [f"{out_name} = {gate_type}({terms[0]})"]
+        logic = []
+        current = terms
+        count = 0
+        while len(current) > 1:
+            next_stage = []
+            for i in range(0, len(current), 2):
+                if i + 1 < len(current):
+                    w = f"{out_name}_{count}"
+                    logic.append(f"{w} = {gate_type}({current[i]}, {current[i+1]})")
+                    next_stage.append(w)
+                    count += 1
+                else:
+                    next_stage.append(current[i])
+            current = next_stage
+        logic.append(f"{out_name} = {current[0]}")
+        return logic
+
+    logic += build_and_chain(g_terms, "g_out", "AND")
+    logic += build_and_chain(gbar_terms, "gbar_out", "NAND")
+
+    logic.append("antisat_out = AND(g_out, gbar_out)")
+    logic.append(f"{target_output} = XOR({target_output}_enc, antisat_out)")
+
+    return logic
+
+def replace_target(gates, target):
+    new_gates = []
     for line in gates:
-        if not replaced and line.startswith(f"{target} ="):
-            rhs = line.split("=")[1].strip()
-            final_logic.append(f"{enc_target} = {rhs}")
-            replaced = True
+        if line.startswith(f"{target} "):
+            parts = line.split("=", 1)
+            new_gates.append(f"{target}_enc = {parts[1].strip()}")
         else:
-            final_logic.append(line)
+            new_gates.append(line)
+    return new_gates
 
-    final_logic += antisat_logic
-    final_logic.append(f"{target} = AND(LOCK_ENABLE, {enc_target})")
-
-    return final_logic
-
-def write_bench(path, key, inputs, outputs, key_inputs, logic):
-    with open(path, "w") as f:
+def write_bench(out_path, key, inputs, key_inputs, outputs, logic):
+    with open(out_path, 'w') as f:
         f.write(f"#key={key}\n")
         for inp in inputs:
             f.write(f"INPUT({inp})\n")
@@ -89,26 +98,30 @@ def write_bench(path, key, inputs, outputs, key_inputs, logic):
             f.write(f"INPUT({k})\n")
         for out in outputs:
             f.write(f"OUTPUT({out})\n")
-        for gate in logic:
-            f.write(f"{gate}\n")
+        for line in logic:
+            f.write(f"{line}\n")
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bench_path", type=Path, required=True)
-    parser.add_argument("--keysize", type=int, required=True)  # Must be even
+    parser.add_argument("--keysize", type=int, required=True)
     parser.add_argument("--output_path", type=Path, default=Path("locked_circuits"))
     args = parser.parse_args()
 
     if args.keysize % 2 != 0:
-        raise ValueError("Keysize must be even for Anti-SAT (2 * n).")
+        raise ValueError("Keysize must be even for Anti-SAT (2n keys)")
 
     inputs, outputs, gates = parse_bench(args.bench_path)
-    key, key_inputs = generate_key(args.keysize)
-    logic = inject_antisat(inputs, outputs, gates, key_inputs)
+    target_output = outputs[0]
+    key, key_wires, key_inputs = generate_key(args.keysize)
 
+    logic_gates = replace_target(gates, target_output)
+    antisat = antisat_logic(inputs, key_wires, key, target_output)
+
+    logic = logic_gates + antisat
     args.output_path.mkdir(parents=True, exist_ok=True)
-    out_file = args.output_path / f"{args.bench_path.stem}_AntiSATLock_k_{args.keysize}.bench"
-    write_bench(out_file, key, inputs, outputs, key_inputs, logic)
+    out_file = args.output_path / f"{args.bench_path.stem}_AntiSAT_k_{args.keysize}.bench"
+    write_bench(out_file, key, inputs, key_inputs, outputs, logic)
 
     print(f"Anti-SAT locked circuit with Key[🔐] = {key} is saved to: {out_file}")
 
