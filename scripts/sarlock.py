@@ -103,7 +103,8 @@ def write_bench(out_path, key, inputs, key_inputs, outputs, logic):
         for inp in inputs:
             f.write(f"INPUT({inp})\n")
         for k in key_inputs:
-            f.write(f"INPUT({k})\n")
+            # f.write(f"INPUT({k})\n")
+            f.write(f"{k}\n")
         for out in outputs:
             f.write(f"OUTPUT({out})\n")
         for line in logic:
