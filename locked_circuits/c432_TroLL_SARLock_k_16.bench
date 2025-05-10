@@ -1,4 +1,4 @@
-#key=1100001111011101
+#key=1011110001010111
 INPUT(G1GAT)
 INPUT(G4GAT)
 INPUT(G8GAT)
@@ -300,10 +300,6 @@ n282        = AND(n241, n281)
 n283        = NOT(n282)
 n284        = AND(n248, n283)
 G432GAT     = NOT(n284)
-zero_not = NOT(G1GAT)
-zero = AND(G1GAT, zero_not)
-one_not = NOT(G1GAT)
-one = NAND(G1GAT, one_not)
 match_0 = XNOR(G1GAT, keyinput0)
 match_1 = XNOR(G4GAT, keyinput1)
 match_2 = XNOR(G8GAT, keyinput2)

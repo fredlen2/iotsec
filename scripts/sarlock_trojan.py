@@ -27,8 +27,7 @@ def parse_bench(path):
 def generate_key(keysize):
     key = ''.join(random.choice("01") for _ in range(keysize))
     key_inputs = [f"keyinput{i}" for i in range(keysize)]
-    key_decls = [f"INPUT({k})" for k in key_inputs]
-    return key, key_inputs, key_decls
+    return key, key_inputs
 
 def build_tree(wires, prefix, gate="AND"):
     logic = []
@@ -47,22 +46,13 @@ def build_tree(wires, prefix, gate="AND"):
         count += 1
     return wires[0], logic
 
-def sarlock_troll_logic(inputs, key_inputs, key_bits, target):
+def sarlock_trojan_logic(inputs, key_inputs, key_bits, target):
     logic = []
-    # Define constants stealthily
-    logic += [
-        "zero_not = NOT(G1GAT)",
-        "zero = AND(G1GAT, zero_not)",
-        "one_not = NOT(G1GAT)",
-        "one = NAND(G1GAT, one_not)"
-    ]
-
     match_xnors = []
-    for i, k in enumerate(key_bits):
+    for i, kbit in enumerate(key_bits):
         pi = inputs[i % len(inputs)]
         ki = key_inputs[i]
         mid = f"match_{i}"
-        const = "one" if k == "1" else "zero"
         logic.append(f"{mid} = XNOR({pi}, {ki})")
         match_xnors.append(mid)
 
@@ -85,10 +75,14 @@ def replace_target(gates, target):
 def write_file(path, key, inputs, key_inputs, outputs, logic):
     with open(path, 'w') as f:
         f.write(f"#key={key}\n")
-        for i in inputs: f.write(f"INPUT({i})\n")
-        for k in key_inputs: f.write(f"INPUT({k})\n")
-        for o in outputs: f.write(f"OUTPUT({o})\n")
-        for line in logic: f.write(f"{line}\n")
+        for i in inputs:
+            f.write(f"INPUT({i})\n")
+        for k in key_inputs:
+            f.write(f"INPUT({k})\n")
+        for o in outputs:
+            f.write(f"OUTPUT({o})\n")
+        for line in logic:
+            f.write(f"{line}\n")
 
 def main():
     parser = argparse.ArgumentParser()
@@ -99,9 +93,9 @@ def main():
 
     inputs, outputs, gates = parse_bench(args.bench_path)
     target = outputs[0]
-    key, key_inputs, _ = generate_key(args.keysize)
+    key, key_inputs = generate_key(args.keysize)
     replaced = replace_target(gates, target)
-    logic = replaced + sarlock_troll_logic(inputs, key_inputs, key, target)
+    logic = replaced + sarlock_trojan_logic(inputs, key_inputs, key, target)
 
     args.output_path.mkdir(exist_ok=True)
     out_file = args.output_path / f"{args.bench_path.stem}_TroLL_SARLock_k_{args.keysize}.bench"
