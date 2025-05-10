@@ -10,6 +10,14 @@ import os
 # sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # from tools.utils.utils import parse_bench_file, write_list_to_file
 
+"""
+Anti-SAT Logic Locking Script (SLD-Compatible)
+- Implements Type-0 Anti-SAT block based on the Anti-SAT paper
+- Adds 2n key inputs
+- Uses XOR key-gates with AND/NAND logic blocks
+- Ensures tool compatibility (no nested gates or aliasing)
+"""
+
 def parse_bench(path):
     with open(path, 'r') as f:
         lines = [line.strip() for line in f if line.strip()]
@@ -26,8 +34,29 @@ def parse_bench(path):
 def generate_key(keysize):
     key = ''.join(random.choice("01") for _ in range(keysize))
     key_inputs = [f"keyinput{i}" for i in range(keysize)]
-    key_decls = [f"INPUT({k})" for k in key_inputs]
-    return key, key_inputs, key_decls
+    return key, key_inputs
+
+def build_gate_tree(terms, out_prefix, gate_type):
+    wires = terms[:]
+    logic = []
+    stage = 0
+
+    while len(wires) > 1:
+        next_stage = []
+        for i in range(0, len(wires), 2):
+            if i + 1 < len(wires):
+                a, b = wires[i], wires[i+1]
+                new_wire = f"{out_prefix}_{stage}_{i//2}"
+                logic.append(f"{new_wire} = {gate_type}({a}, {b})")
+                next_stage.append(new_wire)
+            else:
+                next_stage.append(wires[i])
+        wires = next_stage
+        stage += 1
+
+    final_wire = f"{out_prefix}_final"
+    logic.append(f"{final_wire} = BUF({wires[0]})")
+    return final_wire, logic
 
 def antisat_logic(inputs, keyinputs, key_bits, target_output):
     assert len(keyinputs) % 2 == 0
@@ -43,7 +72,7 @@ def antisat_logic(inputs, keyinputs, key_bits, target_output):
         k2 = keyinputs[i + n]
 
         xor1 = f"g_xor1_{i}"
-        xor2 = f"g_xor2_{i}"
+        xor2 = f"gbar_xor2_{i}"
 
         logic.append(f"{xor1} = XOR({pi}, {k1})")
         logic.append(f"{xor2} = XOR({pi}, {k2})")
@@ -51,30 +80,13 @@ def antisat_logic(inputs, keyinputs, key_bits, target_output):
         g_terms.append(xor1)
         gbar_terms.append(xor2)
 
-    def build_and_chain(terms, out_name, gate_type):
-        if len(terms) == 1:
-            return [f"{out_name} = {gate_type}({terms[0]})"]
-        logic = []
-        current = terms
-        count = 0
-        while len(current) > 1:
-            next_stage = []
-            for i in range(0, len(current), 2):
-                if i + 1 < len(current):
-                    w = f"{out_name}_{count}"
-                    logic.append(f"{w} = {gate_type}({current[i]}, {current[i+1]})")
-                    next_stage.append(w)
-                    count += 1
-                else:
-                    next_stage.append(current[i])
-            current = next_stage
-        logic.append(f"{out_name} = {current[0]}")
-        return logic
+    g_out, g_logic = build_gate_tree(g_terms, "g_and", "AND")
+    gbar_out, gbar_logic = build_gate_tree(gbar_terms, "gbar_nand", "NAND")
 
-    logic += build_and_chain(g_terms, "g_out", "AND")
-    logic += build_and_chain(gbar_terms, "gbar_out", "NAND")
+    logic.extend(g_logic)
+    logic.extend(gbar_logic)
 
-    logic.append("antisat_out = AND(g_out, gbar_out)")
+    logic.append(f"antisat_out = AND({g_out}, {gbar_out})")
     logic.append(f"{target_output} = XOR({target_output}_enc, antisat_out)")
 
     return logic
@@ -95,7 +107,7 @@ def write_bench(out_path, key, inputs, key_inputs, outputs, logic):
         for inp in inputs:
             f.write(f"INPUT({inp})\n")
         for k in key_inputs:
-            f.write(f"INPUT({k})\n")
+            f.write(f"INPUT({k})\n")  # ✅ correct declaration
         for out in outputs:
             f.write(f"OUTPUT({out})\n")
         for line in logic:
@@ -113,7 +125,7 @@ def main():
 
     inputs, outputs, gates = parse_bench(args.bench_path)
     target_output = outputs[0]
-    key, key_wires, key_inputs = generate_key(args.keysize)
+    key, key_wires = generate_key(args.keysize)
 
     logic_gates = replace_target(gates, target_output)
     antisat = antisat_logic(inputs, key_wires, key, target_output)
@@ -121,7 +133,7 @@ def main():
     logic = logic_gates + antisat
     args.output_path.mkdir(parents=True, exist_ok=True)
     out_file = args.output_path / f"{args.bench_path.stem}_AntiSAT_k_{args.keysize}.bench"
-    write_bench(out_file, key, inputs, key_inputs, outputs, logic)
+    write_bench(out_file, key, inputs, key_wires, outputs, logic)
 
     print(f"Anti-SAT locked circuit with Key[🔐] = {key} is saved to: {out_file}")
 
