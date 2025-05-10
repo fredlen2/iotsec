@@ -71,12 +71,12 @@ Trigger logic – A set of rare nodes (inputs) that activate the Trojan.
 Payload logic – The actual malicious modification in the circuit.
 Integration – The Trojan must affect the circuit output when activated.
 
-### Trojan insertion - process all .bench files in `data/` with default settings
+### Trojan insertion - process all .bench files in `data/` with default settings - output folder is `trojan_injected`
 ``` python3
 python3 scripts/insert_trojan.py
 ```
 
-### Trojan insertion for a single file
+### Trojan insertion for a single file - output folder is `trojan_injected`
 ``` python3
 python3 scripts/insert_trojan.py --bench_path data/c432.bench --trigger_size 3 --num_trojans 50
 ```
