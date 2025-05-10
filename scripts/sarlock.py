@@ -4,16 +4,6 @@ import argparse
 import random
 from pathlib import Path
 import os
-import sys
-
-# Ensure the tools directory is on the import path
-# sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-# from tools.utils.utils import (
-#     parse_bench_file,
-#     defining_keyinputs,
-#     insert_key_gates,
-#     write_list_to_file,
-# )
 
 """
 Provably Secure SARLock Implementation
@@ -61,9 +51,11 @@ def build_and_tree(wires, prefix):
 def sarlock_logic(inputs, keyinputs, key_bits, target_output):
     logic = []
 
-    # Generate secure zero/one constants
-    logic.append("zero = AND(G1GAT, NOT(G1GAT))")
-    logic.append("one = OR(G1GAT, NOT(G1GAT))")
+    # SLD-safe constant logic
+    logic.append("zero_not = NOT(G1GAT)")
+    logic.append("zero     = AND(G1GAT, zero_not)")
+    logic.append("one_not1 = NOT(G1GAT)")
+    logic.append("one      = NAND(G1GAT, one_not1)")
 
     match_terms = []
     mismatch_terms = []
@@ -82,13 +74,14 @@ def sarlock_logic(inputs, keyinputs, key_bits, target_output):
         logic.append(f"{xor2} = XNOR({kinp}, {const})")
         mismatch_terms.append(xor2)
 
-    # Match tree
+    # Build AND trees
     match_root, match_gates = build_and_tree(match_terms, "match_and")
     mismatch_root, mismatch_gates = build_and_tree(mismatch_terms, "mismatch_and")
     logic.extend(match_gates + mismatch_gates)
 
-    logic.append(f"DTL_0 = {match_root}")
-    logic.append(f"DTL_2 = {mismatch_root}")
+    # SLD-safe signal passing
+    logic.append(f"DTL_0 = BUF({match_root})")
+    logic.append(f"DTL_2 = BUF({mismatch_root})")
     logic.append("FLIP = AND(DTL_0, DTL_2)")
     logic.append(f"{target_output} = XOR(FLIP, {target_output}_enc)")
 
@@ -110,7 +103,7 @@ def write_bench(out_path, key, inputs, key_inputs, outputs, logic):
         for inp in inputs:
             f.write(f"INPUT({inp})\n")
         for k in key_inputs:
-            f.write(f"{k}\n")
+            f.write(f"INPUT({k})\n")
         for out in outputs:
             f.write(f"OUTPUT({out})\n")
         for line in logic:
@@ -123,17 +116,16 @@ def main():
     parser.add_argument("--output_path", type=Path, default=Path("locked_circuits"))
     args = parser.parse_args()
 
-    # Load bench file
+    # Load original .bench file
     inputs, outputs, gates = parse_bench(args.bench_path)
-    target_output = outputs[0]  # Lock first output
+    target_output = outputs[0]  # Lock the first output
     key, key_wires, key_inputs = generate_key(args.keysize)
 
-    # Replace target gate with encoded version
+    # Modify circuit
     logic_gates = replace_target(gates, target_output)
-    # Add SARLock logic
     sarlock = sarlock_logic(inputs, key_wires, key, target_output)
 
-    # Combine
+    # Combine modified logic
     logic = logic_gates + sarlock
 
     args.output_path.mkdir(parents=True, exist_ok=True)
