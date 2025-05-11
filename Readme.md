@@ -37,6 +37,11 @@ source .venv/bin/activate
     pip install -r requirements.txt
 ```
 
+### SLD, LCMP and Atalanta
+The tools directory in the project folder contains the Atalanta, SLD, and LCMP. You'll need to grant execute permission for the sld and lcmp if you're running the task A script.
+Atalanta can be run from wherever you have yours and is even easier if you have added to your bash profile.
+
+
 ## ABOVE STEPS ARE NECESSARY ESPECIALLY THE .venv FOR ASSIGNMENT 1
 
 # ASSIGNMENT 1
